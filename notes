@@ -29,14 +29,21 @@ pip install python-evtx
 
 
 
-find "/UFOLDER" -type f -name "*.evtx" | while read f; do
+mkdir -p ~/evtx-json
+
+find "/<folder>" -type f -name "*.evtx" | while read f; do
   base=$(basename "$f" .evtx)
-  python3 - "$f" > ~/evtx-json/"$base".json <<EOF
+  echo "Processing $f..."
+  python3 - "$f" > ~/evtx-json/"$base".json <<EOF || echo "Failed to convert: $f" >&2
 import sys, json
 from Evtx.Evtx import Evtx
 
-with Evtx(sys.argv[1]) as log:
-    records = [r.xml() for r in log.records()]
-    print(json.dumps(records, indent=2))
+try:
+    with Evtx(sys.argv[1]) as log:
+        records = [r.xml() for r in log.records()]
+        print(json.dumps(records, indent=2))
+except Exception as e:
+    print(f"Error: {e}", file=sys.stderr)
+    sys.exit(1)
 EOF
 done
