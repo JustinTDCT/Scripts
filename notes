@@ -1,0 +1,42 @@
+brew install python git rust yara
+git clone https://github.com/volatilityfoundation/volatility3.git
+cd volatility3
+
+python3 -m venv ~/volatility3-env
+source ~/volatility3-env/bin/activate
+
+pip install --upgrade pip
+pip install pycryptodome  yara-python pefile jsonschema capstone
+
+chmod +x vol.py
+sudo mkdir -p /usr/local/bin
+sudo chown $(whoami) /usr/local/bin
+ln -s "$(pwd)/vol.py" /usr/local/bin/vol
+
+brew install zeek
+echo 'export PATH="/opt/homebrew/bin:$PATH"' >> ~/.zprofile
+source ~/.zprofile
+
+
+mkdir -p ~/evtx-json
+
+
+python3 -m venv ~/evtx-venv
+source ~/evtx-venv/bin/activate
+
+pip install --upgrade pip
+pip install python-evtx
+
+
+
+find "/UFOLDER" -type f -name "*.evtx" | while read f; do
+  base=$(basename "$f" .evtx)
+  python3 - "$f" > ~/evtx-json/"$base".json <<EOF
+import sys, json
+from Evtx.Evtx import Evtx
+
+with Evtx(sys.argv[1]) as log:
+    records = [r.xml() for r in log.records()]
+    print(json.dumps(records, indent=2))
+EOF
+done
