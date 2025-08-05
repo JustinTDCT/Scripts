@@ -57,8 +57,8 @@ else
     echo "Scanning MBR as mbrscan.txt ... 13/24 (this could take some time)"
     vol -f $1   windows.mbrscan > $foldername/mbrscan.txt
     echo
-    echo "Creating memory map as memmap.txt ... 14/24 (this could take some time)"
-    vol -f $1   windows.memmap > $foldername/memmap.txt
+    echo "Creating memory map as memmap.txt ... 14/24 (skipped by defaul, uncommand line 61 to enable this, this could take some time)"
+    #vol -f $1   windows.memmap > $foldername/memmap.txt
     echo
     echo "Creating process list as processlist.txt ... 15/24"
     vol -f $1   windows.pslist > $foldername/processlist.txt
