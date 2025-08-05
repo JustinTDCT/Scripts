@@ -13,7 +13,9 @@ else
     filename="$1"
     foldername="${filename%.*}"
     foldername="DUMP_$foldername"
-    echo "$foldername"
+    mkdir $foldername
+    echo "- Created folder $foldername, parsed files will be placed in that folder"
+    
   else
     echo "- file not found!"
   fi
