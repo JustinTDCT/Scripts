@@ -16,7 +16,7 @@ else
     mkdir $foldername
     echo "- Created folder $foldername, parsed files will be placed in that folder"
     echo
-    echo "Creating strings file with 8 char minimum as strings.txt ..."
+    echo "Creating strings file with 8 char minimum as strings.txt ... (this could take some time)"
     strings -a -t d -n 8 $1 > $foldername/strings.txt
     echo "Creating command line dump as cdmline.txt ... 1/24"
     vol -f $1   windows.cmdline > $foldername/cmdline.txt
@@ -39,7 +39,7 @@ else
     echo "Creating list of open file handles into handleslist.txt ... 7/24"
     vol -f $1   windows.handles > $foldername/handleslist.txt
     echo
-    echo "Creating list of memory ranges with potentially injected code as malmemcode.txt ... 8/24"
+    echo "Creating list of memory ranges with potentially injected code as malmemcode.txt ... 8/24 (this could take some time)"
     vol -f $1   windows.malware.malfind > $foldername/malmemcode.txt
     echo 
     echo "Creating list of potentially injected by rootkit drivers as rootkitsdrivers.txt ... 9/24"
