@@ -40,7 +40,7 @@ else
     vol -f $1   windows.handles > $foldername/handleslist.txt
     echo
     echo "Creating list of memory ranges with potentially injected code as malmemcode.txt ... 8/24"
-    vol -f $1   windows.malfind > $foldername/malmemcode.txt
+    vol -f $1   windows.malware.malfind > $foldername/malmemcode.txt
     echo 
     echo "Creating list of potentially injected by rootkit drivers as rootkitsdrivers.txt ... 9/24"
     vol -f $1   windows.malware.drivermodule > $foldername/rootkitsdrivers.txt
