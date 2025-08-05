@@ -9,4 +9,7 @@ else
   echo "Checking if file $1 exists ..."
   if [ -f $1 ]; then
     echo "- file found."
-  
+  else
+    echo "- file not found!"
+  fi
+fi  
