@@ -1,0 +1,235 @@
+echo "Sacnning kernel memory using RegEx patterns."
+vol --renderer=csv -f $1 regexscan.RegExScan > regexscan.csv
+
+echo "Running all relevant plugins that provide time related information and orders the results by time."
+vol --renderer=csv -f $1 timeliner.Timeliner
+
+eecho "scan for Intel VT-d structures and generates VM volatility configs for them"
+vol --renderer=csv -f $1 vmscan.Vmscan
+
+echo "Extract information on executed applications from the AmCache (deprecated).
+vol --renderer=csv -f $1 windows.amcache.Amcache
+
+echo "List big page pools.
+vol --renderer=csv -f $1 windows.bigpools.BigPools
+
+echo "Dumps lsa secrets from memory (deprecated)
+vol --renderer=csv -f $1 windows.cachedump.Cachedump
+
+echo "Lists kernel callbacks and notification routines.
+vol --renderer=csv -f $1 windows.callbacks.Callbacks
+
+echo "Lists process command line arguments.
+vol --renderer=csv -f $1 windows.cmdline.CmdLine
+
+echo "Looks for Windows Command History lists
+vol --renderer=csv -f $1 windows.cmdscan.CmdScan
+
+echo "Looks for Windows console buffers
+vol --renderer=csv -f $1 windows.consoles.Consoles
+
+echo "Lists the information from a Windows crash dump.
+vol --renderer=csv -f $1 windows.crashinfo.Crashinfo
+
+echo "Scan for debug registers"
+vol --renderer=csv -f $1 windows.debugregisters.DebugRegisters
+
+echo "scan for the Desktop instances of each Window Station
+vol --renderer=csv -f $1 windows.deskscan.DeskScan
+
+echo "Enumerates the Desktop instances of each Window Station
+vol --renderer=csv -f $1 windows.desktops.Desktops
+
+echo "Listing tree based on drivers and attached devices in a particular windows memory image.
+vol --renderer=csv -f $1 windows.devicetree.DeviceTree
+
+echo "Detects the Direct System Call technique used to bypass EDRs (deprecated).
+vol --renderer=csv -f $1 windows.direct_system_calls.DirectSystemCalls
+
+echo "Lists the loaded DLLs in a particular windows memory image.
+vol --renderer=csv -f $1 windows.dlllist.DllList
+
+echo "List IRPs for drivers in a particular windows memory image.
+vol --renderer=csv -f $1 windows.driverirp.DriverIrp
+
+echo "Determines if any loaded drivers were hidden by a rootkit (deprecated).
+vol --renderer=csv -f $1 windows.drivermodule.DriverModule
+
+echo "scan for drivers present in a particular windows memory image.
+vol --renderer=csv -f $1 windows.driverscan.DriverScan
+
+echo "Dumps cached file contents from Windows memory samples.
+vol --renderer=csv -f $1 windows.dumpfiles.DumpFiles
+
+echo "Display process environment variables
+vol --renderer=csv -f $1 windows.envars.Envars
+
+echo "Identifies ETW (Event Tracing for Windows) patching techniques used by malware to evade detection.
+vol --renderer=csv -f $1 windows.etwpatch.EtwPatch
+
+echo "scan for file objects present in a particular windows memory image.
+vol --renderer=csv -f $1 windows.filescan.FileScan
+
+echo "Lists process token sids.
+vol --renderer=csv -f $1 windows.getservicesids.GetServiceSIDs
+
+echo "Print the SIDs owning each process
+vol --renderer=csv -f $1 windows.getsids.GetSIDs
+
+echo "Lists process open handles.
+vol --renderer=csv -f $1 windows.handles.Handles
+
+echo "Extract Import Address Table to list API (functions) used by a program contained in external libraries
+vol --renderer=csv -f $1 windows.iat.IAT
+
+echo "Show OS & kernel details of the memory sample being analyzed.
+vol --renderer=csv -f $1 windows.info.Info
+
+echo "Print process job link information
+vol --renderer=csv -f $1 windows.joblinks.JobLinks
+
+echo "Print KPCR structure for each processor
+vol --renderer=csv -f $1 windows.kpcrs.KPCRs
+
+echo "Lists the loaded modules in a particular windows memory image.
+vol --renderer=csv -f $1 windows.ldrmodules.LdrModules
+echo "Detects the Direct System Call technique used to bypass EDRs
+vol --renderer=csv -f $1 malware.direct_system_calls.DirectSystemCalls
+echo "Determines if any loaded drivers were hidden by a rootkit
+vol --renderer=csv -f $1 malware.drivermodule.DriverModule
+echo "Lists hollowed processes
+vol --renderer=csv -f $1 malware.hollowprocesses.HollowProcesses
+echo "Detects the Indirect System Call technique used to bypass EDRs.
+vol --renderer=csv -f $1 malware.indirect_system_calls.IndirectSystemCalls
+echo "Lists the loaded modules in a particular windows memory image.
+vol --renderer=csv -f $1 malware.ldrmodules.LdrModules
+echo "Lists process memory ranges that potentially contain injected code.
+vol --renderer=csv -f $1 malware.malfind.Malfind
+echo "Lists processes whose DeletePending bit is set or whose FILE_OBJECT is set to 0 or Vads that are DeleteOnClose
+vol --renderer=csv -f $1 malware.processghosting.ProcessGhosting
+echo "Lists all processes found via four of the methods described in "The Art of Memory Forensics" which may help identify processes that are trying to hide themselves.
+vol --renderer=csv -f $1 malware.psxview.PsXView
+echo "Looks for signs of Skeleton Key malware
+vol --renderer=csv -f $1 malware.skeleton_key_check.Skeleton_Key_Check
+echo "Lists suspicious userland process threads
+vol --renderer=csv -f $1 malware.suspicious_threads.SuspiciousThreads
+echo "Compares services found through list walking versus scanning to find rootkits
+vol --renderer=csv -f $1 malware.svcdiff.SvcDiff
+echo "Detects hooked ntdll.dll stub functions in Windows processes.
+vol --renderer=csv -f $1 malware.unhooked_system_calls.UnhookedSystemCalls
+echo "scan for and parses potential Master Boot Records (MBRs)
+vol --renderer=csv -f $1 mbrscan.MBRScan
+#echo "Prints the memory map
+#vol --renderer=csv -f $1 memmap.Memmap
+echo "scan for Alternate Data Stream
+vol --renderer=csv -f $1 mftscan.ADS
+echo "scan for MFT FILE objects present in a particular windows memory image.
+vol --renderer=csv -f $1 mftscan.MFTScan
+echo "scan for MFT Records with Resident Data
+vol --renderer=csv -f $1 mftscan.ResidentData
+echo "scan for modules present in a particular windows memory image.
+vol --renderer=csv -f $1 modscan.ModScan
+echo "Lists the loaded kernel modules.
+vol --renderer=csv -f $1 modules.Modules
+echo "scan for mutexes present in a particular windows memory image.
+vol --renderer=csv -f $1 mutantscan.MutantScan
+echo "scan for network objects present in a particular windows memory image.
+vol --renderer=csv -f $1 netscan.NetScan
+echo "Traverses network tracking structures present in a particular windows memory image.
+vol --renderer=csv -f $1 netstat.NetStat
+echo "Lists process threads
+vol --renderer=csv -f $1 orphan_kernel_threads.Threads
+vol --renderer=csv -f $1 pe_symbols.PESymbols
+echo "Prints symbols in PE files in process and kernel memory
+vol --renderer=csv -f $1 pedump.PEDump
+echo "Allows extracting PE Files from a specific address in a specific address space
+vol --renderer=csv -f $1 poolscanner.PoolScanner
+echo "A generic pool scanner plugin.
+vol --renderer=csv -f $1 privileges.Privs
+echo "Lists process token privileges
+vol --renderer=csv -f $1 processghosting.ProcessGhosting
+echo "Lists processes whose DeletePending bit is set or whose FILE_OBJECT is set to 0 or Vads that are DeleteOnClose (deprecated).
+vol --renderer=csv -f $1 pslist.PsList
+echo "Lists the processes present in a particular windows memory image.
+vol --renderer=csv -f $1 psscan.PsScan
+echo "scan for processes present in a particular windows memory image.
+vol --renderer=csv -f $1 pstree.PsTree
+echo "Plugin for listing processes in a tree based on their parent process ID.
+vol --renderer=csv -f $1 psxview.PsXView
+echo "Lists all processes found via four of the methods described in "The Art of Memory Forensics" which may help identify processes that are trying to hide themselves.
+vol --renderer=csv -f $1 registry.amcache.Amcache
+echo "Extract information on executed applications from the AmCache.
+vol --renderer=csv -f $1 registry.cachedump.Cachedump
+echo "Dumps lsa secrets from memory
+vol --renderer=csv -f $1 registry.certificates.Certificates
+echo "Lists the certificates in the registry's Certificate Store.
+vol --renderer=csv -f $1 registry.getcellroutine.GetCellRoutine
+echo "Reports registry hives with a hooked GetCellRoutine handler
+vol --renderer=csv -f $1 registry.hashdump.Hashdump
+echo "Dumps user hashes from memory
+vol --renderer=csv -f $1 registry.hivelist.HiveList
+echo "Lists the registry hives present in a particular memory image.
+vol --renderer=csv -f $1 registry.hivescan.HiveScan
+echo "scan for registry hives present in a particular windows memory image.
+vol --renderer=csv -f $1 registry.lsadump.Lsadump
+echo "Dumps lsa secrets from memory
+vol --renderer=csv -f $1 registry.printkey.PrintKey
+echo "Lists the registry keys under a hive or specific key value.
+vol --renderer=csv -f $1 registry.scheduled_tasks.ScheduledTasks
+echo "Decodes scheduled task information from the Windows registry, including information about triggers, actions, run times, and creation times.
+vol --renderer=csv -f $1 registry.userassist.UserAssist
+echo "Print userassist registry keys and information.
+vol --renderer=csv -f $1 scheduled_tasks.ScheduledTasks
+echo "Decodes scheduled task information from the Windows registry, including information about triggers, actions, run times, and creation times (deprecated).
+vol --renderer=csv -f $1 sessions.Sessions
+echo "lists Processes with Session information extracted from Environmental Variables
+vol --renderer=csv -f $1 shimcachemem.ShimcacheMem
+echo "Reads Shimcache entries from the ahcache.sys AVL tree
+vol --renderer=csv -f $1 skeleton_key_check.Skeleton_Key_Check
+echo "Looks for signs of Skeleton Key malware
+vol --renderer=csv -f $1 ssdt.SSDT   Lists the system call table.
+vol --renderer=csv -f $1 statistics.Statistics
+echo "Lists statistics about the memory space.
+vol --renderer=csv -f $1 strings.Strings
+echo "Reads output from the strings command and indicates which process(es) each string belongs to.
+vol --renderer=csv -f $1 suspended_threads.SuspendedThreads
+echo "Enumerates suspended threads.
+vol --renderer=csv -f $1 suspicious_threads.SuspiciousThreads
+echo "Lists suspicious userland process threads (deprecated).
+vol --renderer=csv -f $1 svcdiff.SvcDiff
+echo "Compares services found through list walking versus scanning to find rootkits (deprecated).
+vol --renderer=csv -f $1 svclist.SvcList
+echo "Lists services contained with the services.exe doubly linked list of services
+vol --renderer=csv -f $1 svcscan.SvcScan
+echo "scan for windows services.
+vol --renderer=csv -f $1 symlinkscan.SymlinkScan
+echo "scan for links present in a particular windows memory image.
+vol --renderer=csv -f $1 thrdscan.ThrdScan
+echo "scan for windows threads.
+vol --renderer=csv -f $1 threads.Threads
+echo "Lists process threads
+vol --renderer=csv -f $1 timers.Timers
+echo "Print kernel timers and associated module DPCs
+vol --renderer=csv -f $1 truecrypt.Passphrase
+echo "TrueCrypt Cached Passphrase Finder
+vol --renderer=csv -f $1 unhooked_system_calls.unhooked_system_calls
+echo "Detects hooked ntdll.dll stub functions in Windows processes (deprecated).
+vol --renderer=csv -f $1 unloadedmodules.UnloadedModules
+echo "Lists the unloaded kernel modules.
+vol --renderer=csv -f $1 vadinfo.VadInfo
+echo "Lists process memory ranges.
+vol --renderer=csv -f $1 vadregexscan.VadRegExScan
+echo "scan all virtual memory areas for tasks using RegEx.
+vol --renderer=csv -f $1 vadwalk.VadWalk
+echo "Walk the VAD tree.
+vol --renderer=csv -f $1 vadyarascan.VadYaraScan
+echo "scan all the Virtual Address Descriptor memory maps using yara.
+vol --renderer=csv -f $1 verinfo.VerInfo
+echo "Lists version information from PE files.
+vol --renderer=csv -f $1 virtmap.VirtMap
+echo "Lists virtual mapped sections.
+vol --renderer=csv -f $1 windows.Windows
+echo "Enumerates the Windows of Desktop instances
+vol --renderer=csv -f $1 windowstations.WindowStations
+echo "scan for top level Windows Stations
+vol --renderer=csv -f $1 yarascan.YaraScan   scan kernel memory using yara rules (string or file).
