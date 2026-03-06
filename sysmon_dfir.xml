@@ -68,8 +68,10 @@
   <!-- Enable DNS lookup logging -->
   <DnsLookup>false</DnsLookup>
 
-  <!-- Archive deleted files for forensic recovery (Event ID 23) -->
-  <ArchiveDirectory>C:\Sysmon\Archive</ArchiveDirectory>
+  <!-- Archive deleted files for forensic recovery (Event ID 23)
+       NOTE: Sysmon only accepts a single folder name here (no path separators).
+       It creates this directory at the root of each drive (e.g. C:\SysmonArchive). -->
+  <ArchiveDirectory>SysmonArchive</ArchiveDirectory>
 
   <!--
   ============================================================================
