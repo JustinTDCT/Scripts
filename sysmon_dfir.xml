@@ -76,7 +76,18 @@
   ============================================================================
   -->
   <EventFiltering>
-    <!--
+  <RuleGroup name="ProcessAccess_Excludes_KnownBenign" groupRelation="or">
+  <ProcessAccess onmatch="exclude">
+    <Rule name="Exclude Synology UsbClientService access to Explorer" groupRelation="and">
+      <SourceImage condition="is">C:\Program Files (x86)\Synology\Assistant\UsbClientService.exe</SourceImage>
+      <TargetImage condition="end with">explorer.exe</TargetImage>
+    </Rule>
+    <Rule name="Exclude DesktopInfo access to Explorer" groupRelation="and">
+      <SourceImage condition="is">C:\DesktopInfo\DesktopInfo.exe</SourceImage>
+      <TargetImage condition="end with">explorer.exe</TargetImage>
+    </Rule>
+  </ProcessAccess>
+</RuleGroup>  <!--
     ==========================================================================
       EVENT ID 1 — PROCESS CREATION  (T1059, T1106, T1053, T1204, T1569)
     ==========================================================================
