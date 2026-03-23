@@ -654,11 +654,7 @@
       Attackers shred evidence after completing their mission.
     ==========================================================================
     -->
-    <RuleGroup name="FileBlockShredding_All" groupRelation="or">
-      <FileBlockShredding onmatch="exclude">
-        <!-- Log ALL shredding attempts — no exclusions -->
-      </FileBlockShredding>
-    </RuleGroup>
+
     <!--
     ==========================================================================
       EVENT ID 29 — FILE EXECUTABLE DETECTED  (T1105, T1204)
