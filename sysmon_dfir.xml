@@ -645,20 +645,7 @@
       Configure paths where executables should NEVER appear.
     ==========================================================================
     -->
-    <RuleGroup name="FileBlockExecutable_Includes" groupRelation="or">
-      <FileBlockExecutable onmatch="include">
-        <!-- Block/log PE files dropped via email clients and browsers into temp -->
-        <TargetFilename condition="begin with">C:\Users\</TargetFilename>
-        <TargetFilename condition="end with">.exe</TargetFilename>
-        <!--
-        ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-          NOTE: FileBlockExecutable PREVENTS the file from being written.
-          If you only want to DETECT (not block), use Event ID 29 instead.
-          Uncomment the rules above only if you want active blocking.
-        ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-        -->
-      </FileBlockExecutable>
-    </RuleGroup>
+
     <!--
     ==========================================================================
       EVENT ID 28 — FILE BLOCK SHREDDING  (T1485, T1070.004)
@@ -681,19 +668,6 @@
       tracking tool transfer and payload staging.
     ==========================================================================
     -->
-    <RuleGroup name="FileExecutableDetected_Excludes" groupRelation="or">
-      <FileExecutableDetected onmatch="exclude">
-        <!-- Exclude Windows Update and patching executables -->
-        <Image condition="is">C:\Windows\System32\svchost.exe</Image>
-        <Image condition="begin with">C:\Windows\SoftwareDistribution\</Image>
-        <Image condition="begin with">C:\Windows\WinSxS\</Image>
-        <!--
-        ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-          TUNING: Exclude your software deployment tools here (SCCM, PDQ,
-          Intune, etc.) — they legitimately drop executables at scale.
-        ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-        -->
-      </FileExecutableDetected>
-    </RuleGroup>
+ 
   </EventFiltering>
 </Sysmon>
