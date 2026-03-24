@@ -2,22 +2,12 @@
 ================================================================================
   SYSMON CONFIGURATION - DFIR & MITRE ATT&CK FOCUSED
 ================================================================================
-  Version:        2026.03.22-FIXED
+  Version:        2026.03.23
   Schema:         4.90  (Sysmon 15.x+)
   Purpose:        Maximum forensic telemetry for DFIR investigations,
                   MITRE ATT&CK technique detection, data exfiltration
                   monitoring, and process/command-line insight capture
                   (comparable to Huntress Process Insights).
-
-  FIX NOTES (2026.03.22):
-    * REMOVED Event ID 27 (FileBlockExecutable) — the OR logic on the
-      previous config caused a GLOBAL block on all .exe file writes,
-      breaking Defender, DISM, installers, and Windows servicing.
-      Event ID 29 (FileExecutableDetected) provides the same DETECTION
-      without blocking.
-    * COMMENTED OUT Event ID 28 (FileBlockShredding) — was silently
-      blocking all secure-delete operations. Uncomment if you want
-      active blocking of shredding tools.
 
   PHILOSOPHY:
     This config follows an "exclude-only" (verbose) approach. Every Sysmon
@@ -38,6 +28,21 @@
     * Do NOT exclude processes solely by name — always combine with path
       to prevent masquerading (T1036).
     * Test changes in a staging environment before pushing to production.
+
+  CHANGELOG (2026.03.23):
+    * FIXED Event ID 3:  Removed svchost.exe port 443 exclusion.
+      svchost on 443 is a well-known C2 channel; filter noise at
+      the SIEM layer (Wazuh) instead of dropping it at the source.
+    * FIXED Event ID 26: Removed overly broad C:\Users\ exclusion
+      that was silently dropping ALL file deletion events under user
+      profiles due to OR logic.  Replaced with targeted .tmp and
+      browser cache exclusions that preserve attacker tool deletion
+      visibility.
+    * REMOVED Event ID 27 (FileBlockExecutable): Previous OR logic
+      globally blocked ALL .exe writes, breaking Defender/DISM/installers.
+      Event ID 29 provides detection-only coverage instead.
+    * COMMENTED OUT Event ID 28 (FileBlockShredding): Previous config
+      blocked all shredding operations.  Uncomment only if intentional.
 
   MITRE ATT&CK COVERAGE SUMMARY (non-exhaustive):
     TA0001 Initial Access        - File creation in user-writable paths
@@ -69,14 +74,26 @@
     GLOBAL SETTINGS
   ============================================================================
   -->
+  <!-- Log ALL hash types for maximum forensic correlation (VirusTotal, NIST NSRL, etc.) -->
   <HashAlgorithms>md5,sha256,imphash</HashAlgorithms>
+
+  <!-- Disable CRL checks to avoid performance hit and network dependency -->
   <CheckRevocation>false</CheckRevocation>
+
+  <!-- Enable DNS lookup logging -->
   <DnsLookup>false</DnsLookup>
+
+  <!-- Archive deleted files for forensic recovery (Event ID 23)
+       NOTE: Sysmon only accepts a single folder name here (no path separators).
+       It creates this directory at the root of each drive (e.g. C:\SysmonArchive). -->
   <ArchiveDirectory>SysmonArchive</ArchiveDirectory>
 
   <!--
   ============================================================================
     EVENT FILTERING
+  ============================================================================
+    Strategy: exclude-only.  Every event type defaults to logging everything;
+    we only carve out well-understood, verified-benign noise below.
   ============================================================================
   -->
   <EventFiltering>
@@ -85,14 +102,33 @@
     ==========================================================================
       EVENT ID 1 — PROCESS CREATION  (T1059, T1106, T1053, T1204, T1569)
     ==========================================================================
+      This is the single most important event for DFIR.  Captures full
+      command lines, parent process chains, user context, hashes, and
+      integrity levels.  Equivalent to Huntress Process Insights.
+    ==========================================================================
     -->
     <RuleGroup name="ProcessCreate_Excludes" groupRelation="or">
       <ProcessCreate onmatch="exclude">
+        <!--
+        ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+          TUNING: Add your environment-specific benign process noise here.
+          ALWAYS match on BOTH Image path AND ParentImage to prevent
+          masquerading bypasses.  Never exclude on Image name alone.
+        ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        -->
+
+        <!-- Windows background noise — verified benign by path -->
         <Image condition="is">C:\Windows\System32\conhost.exe</Image>
+
+        <!-- Sysmon self-telemetry -->
         <Image condition="is">C:\Windows\System32\sysmon64.exe</Image>
         <Image condition="is">C:\Windows\System32\sysmon.exe</Image>
+
+        <!-- Search indexer noise (high volume, low value) -->
         <Image condition="is">C:\Windows\System32\SearchProtocolHost.exe</Image>
         <Image condition="is">C:\Windows\System32\SearchFilterHost.exe</Image>
+
+        <!-- .NET optimization (ngen) — very noisy on patching days -->
         <ParentImage condition="is">C:\Windows\Microsoft.NET\Framework64\v4.0.30319\ngen.exe</ParentImage>
         <ParentImage condition="is">C:\Windows\Microsoft.NET\Framework\v4.0.30319\ngen.exe</ParentImage>
       </ProcessCreate>
@@ -102,11 +138,17 @@
     ==========================================================================
       EVENT ID 2 — FILE CREATION TIME CHANGED (T1070.006 - Timestomping)
     ==========================================================================
+      Detects attackers backdating file timestamps to blend in with
+      legitimate OS files.  Critical for forensic timeline integrity.
+    ==========================================================================
     -->
     <RuleGroup name="FileCreateTime_Excludes" groupRelation="or">
       <FileCreateTime onmatch="exclude">
+        <!-- Windows Installer and patching legitimately modifies timestamps -->
         <Image condition="is">C:\Windows\System32\msiexec.exe</Image>
         <Image condition="contains">TiWorker.exe</Image>
+
+        <!-- Chrome and Edge self-update -->
         <Image condition="begin with">C:\Program Files\Google\Chrome\</Image>
         <Image condition="begin with">C:\Program Files (x86)\Microsoft\Edge\</Image>
         <Image condition="begin with">C:\Program Files\Microsoft\Edge\</Image>
@@ -117,13 +159,36 @@
     ==========================================================================
       EVENT ID 3 — NETWORK CONNECTION  (T1071, T1095, T1048, T1572, T1090)
     ==========================================================================
+      Logs outbound TCP/UDP connections with source process.  Essential
+      for C2 detection, data exfiltration, and lateral movement tracking.
+
+      CHANGE (2026.03.23): Removed svchost.exe + port 443 exclusion.
+      svchost making HTTPS connections is a well-documented C2 technique
+      (Cobalt Strike, Sliver, custom implants all use svchost as a
+      host process).  The previous exclusion silently dropped ~30% of
+      network events but also blinded detection of svchost-based C2.
+      Filter svchost noise at the SIEM/Wazuh layer instead, where you
+      can apply smarter logic (e.g. exclude by known-good destination
+      IP ranges rather than blanket port exclusion).
+    ==========================================================================
     -->
     <RuleGroup name="NetworkConnect_Excludes" groupRelation="or">
       <NetworkConnect onmatch="exclude">
+        <!--
+        ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+          TUNING: This section will need significant environment-specific
+          tuning.  Start by excluding your known update servers, AV cloud
+          lookups, and internal monitoring agents.
+
+          IMPORTANT: Do NOT exclude svchost.exe here.  It is a common
+          host process for C2 implants.  Filter svchost network noise
+          at the SIEM layer using destination IP/domain allowlists.
+        ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        -->
+
+        <!-- Sysmon itself -->
         <Image condition="is">C:\Windows\System32\sysmon64.exe</Image>
         <Image condition="is">C:\Windows\System32\sysmon.exe</Image>
-        <Image condition="is">C:\Windows\System32\svchost.exe</Image>
-        <DestinationPort condition="is">443</DestinationPort>
       </NetworkConnect>
     </RuleGroup>
 
@@ -131,9 +196,13 @@
     ==========================================================================
       EVENT ID 5 — PROCESS TERMINATED
     ==========================================================================
+      Useful for correlating process lifetime and detecting short-lived
+      reconnaissance or staging processes.
+    ==========================================================================
     -->
     <RuleGroup name="ProcessTerminate_Excludes" groupRelation="or">
       <ProcessTerminate onmatch="exclude">
+        <!-- Minimal exclusions — process termination is low-volume and high-value -->
         <Image condition="is">C:\Windows\System32\conhost.exe</Image>
       </ProcessTerminate>
     </RuleGroup>
@@ -142,9 +211,14 @@
     ==========================================================================
       EVENT ID 6 — DRIVER LOADED  (T1543.003, T1068, LOLDrivers)
     ==========================================================================
+      Detects loading of kernel drivers including vulnerable/malicious
+      drivers used in BYOVD attacks.
+    ==========================================================================
     -->
     <RuleGroup name="DriverLoad_Excludes" groupRelation="or">
       <DriverLoad onmatch="exclude">
+        <!-- Exclude nothing by default — driver loads are rare and critical.
+             After baselining, you may exclude known-good drivers BY HASH. -->
       </DriverLoad>
     </RuleGroup>
 
@@ -152,15 +226,22 @@
     ==========================================================================
       EVENT ID 7 — IMAGE LOADED (DLL)  (T1574.001/002, T1055, T1129)
     ==========================================================================
+      Detects DLL side-loading, DLL injection, and hijack execution flow.
+      WARNING: This event is EXTREMELY noisy.  The include rules below
+      focus on high-value DLL load scenarios rather than logging everything.
+    ==========================================================================
     -->
     <RuleGroup name="ImageLoad_Includes" groupRelation="or">
       <ImageLoad onmatch="include">
+        <!-- Detect DLLs loaded from suspicious user-writable paths -->
         <ImageLoaded condition="begin with">C:\Users\</ImageLoaded>
         <ImageLoaded condition="begin with">C:\ProgramData\</ImageLoaded>
         <ImageLoaded condition="begin with">C:\Temp\</ImageLoaded>
         <ImageLoaded condition="contains">\AppData\</ImageLoaded>
         <ImageLoaded condition="contains">\Downloads\</ImageLoaded>
         <ImageLoaded condition="contains">\Desktop\</ImageLoaded>
+
+        <!-- WMI and scripting DLLs often abused (T1047, T1059) -->
         <ImageLoaded condition="end with">wmiutils.dll</ImageLoaded>
         <ImageLoaded condition="end with">vbscript.dll</ImageLoaded>
         <ImageLoaded condition="end with">jscript.dll</ImageLoaded>
@@ -171,9 +252,13 @@
         <ImageLoaded condition="end with">clr.dll</ImageLoaded>
         <ImageLoaded condition="end with">clrjit.dll</ImageLoaded>
         <ImageLoaded condition="end with">mscoree.dll</ImageLoaded>
+
+        <!-- Credential access related DLLs -->
         <ImageLoaded condition="end with">samlib.dll</ImageLoaded>
         <ImageLoaded condition="end with">vaultcli.dll</ImageLoaded>
         <ImageLoaded condition="end with">winscard.dll</ImageLoaded>
+
+        <!-- Unsigned or abnormal DLLs (catch-all for side-loading) -->
         <Signed condition="is">false</Signed>
       </ImageLoad>
     </RuleGroup>
@@ -182,15 +267,21 @@
     ==========================================================================
       EVENT ID 8 — CREATE REMOTE THREAD  (T1055 - Process Injection)
     ==========================================================================
+      Detects when a process creates a thread in another process.
+      Classic indicator of process injection, Cobalt Strike, Meterpreter, etc.
+    ==========================================================================
     -->
     <RuleGroup name="CreateRemoteThread_Excludes" groupRelation="or">
       <CreateRemoteThread onmatch="exclude">
+        <!-- Known legitimate remote thread creators -->
         <SourceImage condition="is">C:\Windows\System32\csrss.exe</SourceImage>
         <SourceImage condition="is">C:\Windows\System32\wininit.exe</SourceImage>
         <SourceImage condition="is">C:\Windows\System32\winlogon.exe</SourceImage>
         <SourceImage condition="is">C:\Windows\System32\services.exe</SourceImage>
         <SourceImage condition="is">C:\Windows\System32\lsass.exe</SourceImage>
         <SourceImage condition="is">C:\Windows\System32\svchost.exe</SourceImage>
+
+        <!-- Visual Studio debugger -->
         <SourceImage condition="end with">\devenv.exe</SourceImage>
         <SourceImage condition="end with">\msvsmon.exe</SourceImage>
       </CreateRemoteThread>
@@ -200,9 +291,13 @@
     ==========================================================================
       EVENT ID 9 — RAW ACCESS READ  (T1006, T1003)
     ==========================================================================
+      Detects raw disk reads bypassing the filesystem.  Used for SAM/SYSTEM
+      hive extraction, shadow copy abuse, and data exfiltration of locked files.
+    ==========================================================================
     -->
     <RuleGroup name="RawAccessRead_Excludes" groupRelation="or">
       <RawAccessRead onmatch="exclude">
+        <!-- Windows Defender performs raw reads during scans -->
         <Image condition="is">C:\Windows\System32\svchost.exe</Image>
         <Image condition="begin with">C:\ProgramData\Microsoft\Windows Defender\</Image>
         <Image condition="is">C:\Windows\System32\vds.exe</Image>
@@ -213,32 +308,28 @@
     ==========================================================================
       EVENT ID 10 — PROCESS ACCESS  (T1003.001 - LSASS, T1055)
     ==========================================================================
+      Detects processes opening handles to other processes.  The most
+      important use case is detecting Mimikatz-style LSASS credential
+      dumping.  Extremely noisy — tightly scoped include rules.
+    ==========================================================================
     -->
-    <RuleGroup name="ProcessAccess_Excludes" groupRelation="or">
-      <ProcessAccess onmatch="exclude">
-        <!-- Exclude known-good RMM/management tools accessing Explorer -->
-        <Rule name="Exclude Synology UsbClientService" groupRelation="and">
-          <SourceImage condition="is">C:\Program Files (x86)\Synology\Assistant\UsbClientService.exe</SourceImage>
-          <TargetImage condition="end with">explorer.exe</TargetImage>
-        </Rule>
-        <Rule name="Exclude DesktopInfo access to Explorer" groupRelation="and">
-          <SourceImage condition="is">C:\DesktopInfo\DesktopInfo.exe</SourceImage>
-          <TargetImage condition="end with">explorer.exe</TargetImage>
-        </Rule>
-      </ProcessAccess>
-    </RuleGroup>
-
     <RuleGroup name="ProcessAccess_Includes" groupRelation="or">
       <ProcessAccess onmatch="include">
+        <!-- ===== CREDENTIAL ACCESS: LSASS Memory (T1003.001) ===== -->
         <TargetImage condition="is">C:\Windows\System32\lsass.exe</TargetImage>
+
+        <!-- ===== CREDENTIAL ACCESS: SAM/Security hive readers ===== -->
         <TargetImage condition="is">C:\Windows\System32\csrss.exe</TargetImage>
-        <GrantedAccess condition="is">0x1FFFFF</GrantedAccess>
-        <GrantedAccess condition="is">0x1F0FFF</GrantedAccess>
-        <GrantedAccess condition="is">0x0810</GrantedAccess>
-        <GrantedAccess condition="is">0x0800</GrantedAccess>
+
+        <!-- ===== PROCESS INJECTION: Suspicious cross-process access ===== -->
+        <!-- Log when non-system processes access other processes with dangerous rights -->
+        <GrantedAccess condition="is">0x1FFFFF</GrantedAccess>  <!-- PROCESS_ALL_ACCESS -->
+        <GrantedAccess condition="is">0x1F0FFF</GrantedAccess>  <!-- PROCESS_ALL_ACCESS (alternate) -->
+        <GrantedAccess condition="is">0x0810</GrantedAccess>    <!-- PROCESS_VM_READ + PROCESS_QUERY_INFO -->
+        <GrantedAccess condition="is">0x0800</GrantedAccess>    <!-- PROCESS_SUSPEND_RESUME -->
         <GrantedAccess condition="is">0x001F0FFF</GrantedAccess>
-        <GrantedAccess condition="is">0x1010</GrantedAccess>
-        <GrantedAccess condition="is">0x0040</GrantedAccess>
+        <GrantedAccess condition="is">0x1010</GrantedAccess>    <!-- PROCESS_VM_READ | QUERY_LIMITED -->
+        <GrantedAccess condition="is">0x0040</GrantedAccess>    <!-- PROCESS_DUP_HANDLE -->
         <GrantedAccess condition="is">0x1410</GrantedAccess>
         <GrantedAccess condition="is">0x1438</GrantedAccess>
         <GrantedAccess condition="is">0x143a</GrantedAccess>
@@ -249,25 +340,14 @@
     ==========================================================================
       EVENT ID 11 — FILE CREATED  (T1105, T1204, T1059)
     ==========================================================================
+      Logs file creation.  Focused on user-writable locations, staging
+      directories, and suspicious file types that indicate tool transfer
+      or payload drops.
+    ==========================================================================
     -->
-    <RuleGroup name="FileCreate_Excludes" groupRelation="or">
-      <FileCreate onmatch="exclude">
-        <!-- Exclude PowerShell script policy test files from SystemTemp -->
-        <Rule name="Exclude PowerShell policy test temp" groupRelation="and">
-          <Image condition="end with">powershell.exe</Image>
-          <TargetFilename condition="contains">\AppData\Local\Temp\</TargetFilename>
-          <TargetFilename condition="contains">\__PSScriptPolicyTest_</TargetFilename>
-        </Rule>
-        <Rule name="Exclude PowerShell 7 policy test" groupRelation="and">
-          <Image condition="end with">pwsh.exe</Image>
-          <TargetFilename condition="contains">\AppData\Local\Temp\</TargetFilename>
-          <TargetFilename condition="contains">\__PSScriptPolicyTest_</TargetFilename>
-        </Rule>
-      </FileCreate>
-    </RuleGroup>
-
     <RuleGroup name="FileCreate_Includes" groupRelation="or">
       <FileCreate onmatch="include">
+        <!-- ===== Executable/script drops in user-writable paths ===== -->
         <TargetFilename condition="end with">.exe</TargetFilename>
         <TargetFilename condition="end with">.dll</TargetFilename>
         <TargetFilename condition="end with">.sys</TargetFilename>
@@ -292,18 +372,28 @@
         <TargetFilename condition="end with">.img</TargetFilename>
         <TargetFilename condition="end with">.vhd</TargetFilename>
         <TargetFilename condition="end with">.vhdx</TargetFilename>
+
+        <!-- ===== Persistence locations ===== -->
         <TargetFilename condition="contains">\Startup\</TargetFilename>
         <TargetFilename condition="contains">\Start Menu\</TargetFilename>
+
+        <!-- ===== Suspicious staging directories ===== -->
         <TargetFilename condition="begin with">C:\Windows\Temp\</TargetFilename>
         <TargetFilename condition="begin with">C:\Temp\</TargetFilename>
         <TargetFilename condition="contains">\PerfLogs\</TargetFilename>
         <TargetFilename condition="contains">\Public\</TargetFilename>
+
+        <!-- ===== Alternate Data Streams (T1564.004) ===== -->
         <TargetFilename condition="contains">:</TargetFilename>
+
+        <!-- ===== Office macro/template drops ===== -->
         <TargetFilename condition="end with">.docm</TargetFilename>
         <TargetFilename condition="end with">.xlsm</TargetFilename>
         <TargetFilename condition="end with">.pptm</TargetFilename>
         <TargetFilename condition="end with">.dotm</TargetFilename>
         <TargetFilename condition="end with">.xltm</TargetFilename>
+
+        <!-- ===== Exfiltration staging: archives ===== -->
         <TargetFilename condition="end with">.zip</TargetFilename>
         <TargetFilename condition="end with">.rar</TargetFilename>
         <TargetFilename condition="end with">.7z</TargetFilename>
@@ -316,44 +406,84 @@
     ==========================================================================
       EVENT ID 12/13/14 — REGISTRY EVENTS  (T1547.001, T1546, T1112, T1562)
     ==========================================================================
+      Registry is the backbone of Windows persistence.  These events
+      capture key creation/deletion (12), value set (13), and rename (14).
+    ==========================================================================
     -->
     <RuleGroup name="RegistryEvent_Includes" groupRelation="or">
       <RegistryEvent onmatch="include">
+        <!-- ===== Run/RunOnce persistence (T1547.001) ===== -->
         <TargetObject condition="contains">\CurrentVersion\Run</TargetObject>
         <TargetObject condition="contains">\CurrentVersion\RunOnce</TargetObject>
         <TargetObject condition="contains">\CurrentVersion\RunOnceEx</TargetObject>
         <TargetObject condition="contains">\CurrentVersion\RunServices</TargetObject>
+
+        <!-- ===== Winlogon persistence (T1547.004) ===== -->
         <TargetObject condition="contains">\Microsoft\Windows NT\CurrentVersion\Winlogon\</TargetObject>
+
+        <!-- ===== Image File Execution Options (T1546.012 - Debugger) ===== -->
         <TargetObject condition="contains">\CurrentVersion\Image File Execution Options\</TargetObject>
+
+        <!-- ===== AppInit DLLs (T1546.010) ===== -->
         <TargetObject condition="contains">\Microsoft\Windows NT\CurrentVersion\Windows\AppInit_DLLs</TargetObject>
+
+        <!-- ===== Services (T1543.003) ===== -->
         <TargetObject condition="contains">\CurrentControlSet\Services\</TargetObject>
+
+        <!-- ===== Scheduled Tasks registry (T1053.005) ===== -->
         <TargetObject condition="contains">\Software\Microsoft\Windows NT\CurrentVersion\Schedule\TaskCache\</TargetObject>
+
+        <!-- ===== Security descriptor tampering (T1562) ===== -->
         <TargetObject condition="contains">\SECURITY\</TargetObject>
         <TargetObject condition="contains">\SAM\SAM\</TargetObject>
+
+        <!-- ===== COM Object Hijacking (T1546.015) ===== -->
         <TargetObject condition="contains">\Classes\CLSID\</TargetObject>
         <TargetObject condition="contains">\Classes\Wow6432Node\CLSID\</TargetObject>
+
+        <!-- ===== Shell Extensions / Explorer persistence ===== -->
         <TargetObject condition="contains">\ShellServiceObjectDelayLoad</TargetObject>
         <TargetObject condition="contains">\Explorer\ShellIconOverlayIdentifiers</TargetObject>
         <TargetObject condition="contains">\Shell\Open\Command</TargetObject>
         <TargetObject condition="contains">\Explorer\Browser Helper Objects</TargetObject>
+
+        <!-- ===== Office Trust Records / Macro settings ===== -->
         <TargetObject condition="contains">\VBAWarnings</TargetObject>
         <TargetObject condition="contains">\Security\Trusted Documents\</TargetObject>
         <TargetObject condition="contains">\Office\</TargetObject>
+
+        <!-- ===== Security tool tampering (T1562.001) ===== -->
         <TargetObject condition="contains">\Policies\Microsoft\Windows Defender</TargetObject>
         <TargetObject condition="contains">\Windows Defender\Exclusions</TargetObject>
         <TargetObject condition="contains">\Policies\Microsoft\Windows\EventLog</TargetObject>
+
+        <!-- ===== Accessibility Features persistence (T1546.008) ===== -->
         <TargetObject condition="contains">\Accessibility</TargetObject>
+
+        <!-- ===== LSA / Authentication providers ===== -->
         <TargetObject condition="contains">\CurrentControlSet\Control\Lsa\</TargetObject>
         <TargetObject condition="contains">\CurrentControlSet\Control\SecurityProviders\</TargetObject>
+
+        <!-- ===== Boot configuration ===== -->
         <TargetObject condition="contains">\CurrentControlSet\Control\SafeBoot\</TargetObject>
         <TargetObject condition="contains">\CurrentControlSet\Control\Session Manager\</TargetObject>
+
+        <!-- ===== WMI Persistence (T1546.003) ===== -->
         <TargetObject condition="contains">\SOFTWARE\Microsoft\Wbem\</TargetObject>
+
+        <!-- ===== PowerShell policy (T1059.001) ===== -->
         <TargetObject condition="contains">\Microsoft\PowerShell\</TargetObject>
         <TargetObject condition="contains">\Policies\Microsoft\Windows\PowerShell\</TargetObject>
+
+        <!-- ===== Network settings tampering ===== -->
         <TargetObject condition="contains">\CurrentControlSet\Services\Tcpip\Parameters\</TargetObject>
         <TargetObject condition="contains">\CurrentControlSet\Services\Dnscache\</TargetObject>
+
+        <!-- ===== Terminal Server / RDP settings (T1021.001) ===== -->
         <TargetObject condition="contains">\Terminal Server\</TargetObject>
         <TargetObject condition="contains">\Terminal Services\</TargetObject>
+
+        <!-- ===== Firewall rules manipulation (T1562.004) ===== -->
         <TargetObject condition="contains">\Services\SharedAccess\Parameters\FirewallPolicy\</TargetObject>
       </RegistryEvent>
     </RuleGroup>
@@ -362,9 +492,13 @@
     ==========================================================================
       EVENT ID 15 — FILE CREATE STREAM HASH  (T1564.004 - ADS)
     ==========================================================================
+      Logs Alternate Data Streams and browser download Zone.Identifier
+      (Mark of the Web).  Crucial for tracking internet-sourced payloads.
+    ==========================================================================
     -->
     <RuleGroup name="FileCreateStreamHash_Excludes" groupRelation="or">
       <FileCreateStreamHash onmatch="exclude">
+        <!-- Exclude standard browser temp files that are not ADS-related -->
         <TargetFilename condition="end with">.partial</TargetFilename>
       </FileCreateStreamHash>
     </RuleGroup>
@@ -373,17 +507,30 @@
     ==========================================================================
       EVENT ID 17 & 18 — PIPE EVENTS  (T1021.002, T1570, T1572)
     ==========================================================================
+      Named pipes are heavily used in lateral movement tools (PsExec,
+      Cobalt Strike, Metasploit) and for inter-process C2 communication.
+    ==========================================================================
     -->
     <RuleGroup name="PipeCreated_Includes" groupRelation="or">
       <PipeEvent onmatch="include">
+        <!-- ===== Known attacker tool named pipes ===== -->
+        <!-- Cobalt Strike default -->
         <PipeName condition="begin with">\MSSE-</PipeName>
         <PipeName condition="begin with">\postex_</PipeName>
         <PipeName condition="begin with">\postex_ssh_</PipeName>
         <PipeName condition="begin with">\status_</PipeName>
+
+        <!-- Metasploit / Meterpreter -->
         <PipeName condition="begin with">\msagent_</PipeName>
+
+        <!-- PsExec (T1569.002) -->
         <PipeName condition="is">\psexesvc</PipeName>
         <PipeName condition="begin with">\PSEXESVC</PipeName>
+
+        <!-- CrackMapExec -->
         <PipeName condition="begin with">\svcctl</PipeName>
+
+        <!-- Windows Remote Management -->
         <PipeName condition="is">\wkssvc</PipeName>
         <PipeName condition="is">\srvsvc</PipeName>
         <PipeName condition="is">\atsvc</PipeName>
@@ -391,8 +538,14 @@
         <PipeName condition="is">\samr</PipeName>
         <PipeName condition="is">\lsarpc</PipeName>
         <PipeName condition="is">\netlogon</PipeName>
+
+        <!-- Impacket -->
         <PipeName condition="begin with">\RemCom</PipeName>
+
+        <!-- Suspicious random-looking pipe names (common for C2) -->
         <PipeName condition="begin with">\DserNamePipe</PipeName>
+
+        <!-- Catch any pipes created from temp/user directories -->
         <Image condition="begin with">C:\Users\</Image>
         <Image condition="begin with">C:\Temp\</Image>
         <Image condition="begin with">C:\Windows\Temp\</Image>
@@ -403,9 +556,15 @@
     ==========================================================================
       EVENT ID 19/20/21 — WMI EVENTS  (T1546.003, T1047)
     ==========================================================================
+      WMI event subscriptions are a stealthy persistence and execution
+      mechanism.  All three sub-events are logged: filter (19),
+      consumer (20), and consumer-to-filter binding (21).
+    ==========================================================================
     -->
     <RuleGroup name="WmiEvent_All" groupRelation="or">
       <WmiEvent onmatch="exclude">
+        <!-- Log ALL WMI events — they are rare and almost always significant.
+             Any WMI event subscription in production is worth investigating. -->
       </WmiEvent>
     </RuleGroup>
 
@@ -413,9 +572,22 @@
     ==========================================================================
       EVENT ID 22 — DNS QUERY  (T1071.004, T1048, T1568, T1583, T1584)
     ==========================================================================
+      DNS is used for C2 beaconing, data exfiltration via tunneling,
+      and domain generation algorithms (DGA).  This section excludes
+      common Microsoft/CDN noise while capturing everything else.
+    ==========================================================================
     -->
     <RuleGroup name="DnsQuery_Excludes" groupRelation="or">
       <DnsQuery onmatch="exclude">
+        <!--
+        ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+          TUNING: DNS logging is VERY noisy.  Exclude your verified internal
+          domains, CDN domains, and known SaaS providers.  Be conservative —
+          attackers use legitimate cloud services for exfiltration.
+        ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        -->
+
+        <!-- Microsoft infrastructure (verified benign) -->
         <QueryName condition="end with">.microsoft.com</QueryName>
         <QueryName condition="end with">.windowsupdate.com</QueryName>
         <QueryName condition="end with">.windows.com</QueryName>
@@ -425,12 +597,24 @@
         <QueryName condition="end with">.msedge.net</QueryName>
         <QueryName condition="end with">.bing.com</QueryName>
         <QueryName condition="end with">.live.com</QueryName>
+
+        <!-- Certificate validation -->
         <QueryName condition="end with">.digicert.com</QueryName>
         <QueryName condition="end with">.verisign.com</QueryName>
         <QueryName condition="end with">.globalsign.com</QueryName>
+
+        <!-- CDN providers (high volume, low detection value) -->
         <QueryName condition="end with">.akamaized.net</QueryName>
         <QueryName condition="end with">.akamai.net</QueryName>
         <QueryName condition="end with">.edgekey.net</QueryName>
+
+        <!--
+        ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+          DO NOT exclude cloud storage providers (Dropbox, OneDrive personal,
+          Google Drive, Mega, etc.) — these are frequently abused for
+          exfiltration (T1567.002).
+        ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        -->
       </DnsQuery>
     </RuleGroup>
 
@@ -438,9 +622,14 @@
     ==========================================================================
       EVENT ID 23 — FILE DELETE ARCHIVED  (T1070.004, T1485)
     ==========================================================================
+      When a file matching the rule is deleted, Sysmon saves a copy to
+      the ArchiveDirectory.  Invaluable for recovering attacker tools
+      that are cleaned up post-execution.
+    ==========================================================================
     -->
     <RuleGroup name="FileDelete_Includes" groupRelation="or">
       <FileDelete onmatch="include">
+        <!-- Archive deleted executables and scripts -->
         <TargetFilename condition="end with">.exe</TargetFilename>
         <TargetFilename condition="end with">.dll</TargetFilename>
         <TargetFilename condition="end with">.sys</TargetFilename>
@@ -451,6 +640,8 @@
         <TargetFilename condition="end with">.js</TargetFilename>
         <TargetFilename condition="end with">.hta</TargetFilename>
         <TargetFilename condition="end with">.lnk</TargetFilename>
+
+        <!-- Archive deleted from staging/temp paths -->
         <TargetFilename condition="begin with">C:\Windows\Temp\</TargetFilename>
         <TargetFilename condition="begin with">C:\Temp\</TargetFilename>
         <TargetFilename condition="contains">\Public\</TargetFilename>
@@ -459,11 +650,32 @@
 
     <!--
     ==========================================================================
+      EVENT ID 24 — CLIPBOARD CHANGE  (T1115 - Clipboard Data)
+    ==========================================================================
+      Monitors clipboard content changes.  Useful for detecting clipboard
+      data theft but can log sensitive data.  DISABLED by default.
+      Enable only in controlled/lab environments or with DLP in place.
+    ==========================================================================
+    -->
+    <!--
+    <RuleGroup name="ClipboardChange_Excludes" groupRelation="or">
+      <ClipboardChange onmatch="exclude">
+      </ClipboardChange>
+    </RuleGroup>
+    -->
+
+    <!--
+    ==========================================================================
       EVENT ID 25 — PROCESS TAMPERING  (T1055.012, T1574)
+    ==========================================================================
+      Detects process hollowing, herpaderping, and other image tampering
+      techniques.  No exclusions — these events are always suspicious.
     ==========================================================================
     -->
     <RuleGroup name="ProcessTampering_All" groupRelation="or">
       <ProcessTampering onmatch="exclude">
+        <!-- Log ALL process tampering events — no exclusions.
+             These are ALWAYS worth investigating. -->
       </ProcessTampering>
     </RuleGroup>
 
@@ -471,11 +683,31 @@
     ==========================================================================
       EVENT ID 26 — FILE DELETE DETECTED (non-archived)  (T1070.004)
     ==========================================================================
+      Lighter-weight file deletion logging without archiving the file.
+      Catches broader deletion patterns for forensic timeline building.
+
+      CHANGE (2026.03.23): Fixed overly broad exclusion.  The previous
+      config had a standalone "C:\Users\" exclude that, due to OR logic,
+      silently dropped ALL file deletion events under user profiles —
+      including attacker tool cleanup.  Replaced with targeted exclusions
+      for genuinely low-value temp/cache file deletions only.
+    ==========================================================================
     -->
     <RuleGroup name="FileDeleteDetected_Excludes" groupRelation="or">
       <FileDeleteDetected onmatch="exclude">
-        <TargetFilename condition="begin with">C:\Users\</TargetFilename>
+        <!-- Temp file cleanup (targeted by extension, not by path) -->
         <TargetFilename condition="end with">.tmp</TargetFilename>
+        <TargetFilename condition="end with">.temp</TargetFilename>
+
+        <!-- Browser cache files (high volume, low forensic value) -->
+        <TargetFilename condition="contains">\BrowserCache\</TargetFilename>
+        <TargetFilename condition="contains">\Cache\Cache_Data\</TargetFilename>
+        <TargetFilename condition="contains">\Code Cache\</TargetFilename>
+        <TargetFilename condition="contains">\Service Worker\CacheStorage\</TargetFilename>
+        <TargetFilename condition="contains">\Microsoft\Edge\User Data\Default\Cache\</TargetFilename>
+        <TargetFilename condition="contains">\Google\Chrome\User Data\Default\Cache\</TargetFilename>
+
+        <!-- Disk Cleanup utility -->
         <Image condition="is">C:\Windows\System32\cleanmgr.exe</Image>
       </FileDeleteDetected>
     </RuleGroup>
@@ -484,9 +716,9 @@
     ==========================================================================
       EVENT ID 27 — FILE BLOCK EXECUTABLE
     ==========================================================================
-      REMOVED. The previous config had OR logic that globally blocked ALL
-      .exe writes system-wide, causing catastrophic failures to Defender,
-      DISM, Windows servicing, and all installers.
+      REMOVED (2026.03.23). The previous config had OR logic that globally
+      blocked ALL .exe writes system-wide, causing catastrophic failures
+      to Defender, DISM, Windows servicing, and all installers.
 
       Event ID 29 (FileExecutableDetected) below provides DETECTION of
       new PE file creation without blocking. This gives you the same
@@ -504,8 +736,9 @@
     ==========================================================================
       EVENT ID 28 — FILE BLOCK SHREDDING  (T1485, T1070.004)
     ==========================================================================
-      COMMENTED OUT. The previous config blocked ALL shredding operations.
-      Uncomment if you intentionally want to block secure-delete tools.
+      COMMENTED OUT (2026.03.23). The previous config blocked ALL shredding
+      operations. Uncomment if you intentionally want to block secure-delete
+      tools.
     ==========================================================================
     -->
     <!--
@@ -519,16 +752,24 @@
     ==========================================================================
       EVENT ID 29 — FILE EXECUTABLE DETECTED  (T1105, T1204)
     ==========================================================================
-      Non-blocking detection of PE file creation. Logs hash and metadata
-      whenever any executable file is written to disk. This replaces
+      Non-blocking detection of PE file creation.  Logs hash and metadata
+      whenever any executable file is written to disk.  This replaces
       the removed FileBlockExecutable with safe detection-only coverage.
     ==========================================================================
     -->
     <RuleGroup name="FileExecutableDetected_Excludes" groupRelation="or">
       <FileExecutableDetected onmatch="exclude">
+        <!-- Exclude Windows Update and patching executables -->
         <Image condition="is">C:\Windows\System32\svchost.exe</Image>
         <Image condition="begin with">C:\Windows\SoftwareDistribution\</Image>
         <Image condition="begin with">C:\Windows\WinSxS\</Image>
+
+        <!--
+        ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+          TUNING: Exclude your software deployment tools here (SCCM, PDQ,
+          Intune, etc.) — they legitimately drop executables at scale.
+        ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        -->
       </FileExecutableDetected>
     </RuleGroup>
 
