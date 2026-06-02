@@ -1,0 +1,284 @@
+<Sysmon schemaversion="4.90">
+  <!--
+    TAB DFIR Sysmon Observe-Only Configuration v8 Balanced Event ID 10
+
+    Purpose:
+      Collect DFIR and hunting telemetry without enforcing restrictions.
+
+    Constraints:
+      - Observe only: no blocking rules are enabled.
+      - No Event ID 23 FileDelete archive/preservation.
+      - No Event ID 24 ClipboardChange.
+      - No Event ID 27/28 blocking.
+      - No file-content collection.
+      - Uses simple Sysmon XML syntax for compatibility: no RuleGroup wrappers and no "contains any" conditions.
+      - Event ID 10 is tuned from v5 using local noise findings to support 30-day retention while preserving LSASS/LSA credential-access visibility.
+  -->
+
+  <HashAlgorithms>SHA256,MD5,IMPHASH</HashAlgorithms>
+  <CheckRevocation>false</CheckRevocation>
+  <DnsLookup>false</DnsLookup>
+
+  <EventFiltering>
+
+    <!-- Event ID 1: Process Create - log all process launches. -->
+    <ProcessCreate onmatch="exclude" />
+
+    <!-- Event ID 2: File creation time changed - timestomping evidence. -->
+    <FileCreateTime onmatch="exclude" />
+
+    <!-- Event ID 3: Network Connection - broad process-to-network mapping with local exclusions. -->
+    <NetworkConnect onmatch="exclude">
+      <DestinationIp condition="is">127.0.0.1</DestinationIp>
+      <DestinationIp condition="is">::1</DestinationIp>
+      <DestinationIp condition="is">0.0.0.0</DestinationIp>
+    </NetworkConnect>
+
+    <!-- Event ID 5: Process Terminate - selected short-lived shells, LOLBins, and DFIR utilities. -->
+    <ProcessTerminate onmatch="include">
+      <Image condition="end with">\cmd.exe</Image>
+      <Image condition="end with">\powershell.exe</Image>
+      <Image condition="end with">\pwsh.exe</Image>
+      <Image condition="end with">\wscript.exe</Image>
+      <Image condition="end with">\cscript.exe</Image>
+      <Image condition="end with">\mshta.exe</Image>
+      <Image condition="end with">\rundll32.exe</Image>
+      <Image condition="end with">\regsvr32.exe</Image>
+      <Image condition="end with">\installutil.exe</Image>
+      <Image condition="end with">\msbuild.exe</Image>
+      <Image condition="end with">\schtasks.exe</Image>
+      <Image condition="end with">\wmic.exe</Image>
+      <Image condition="end with">\ntdsutil.exe</Image>
+      <Image condition="end with">\procdump.exe</Image>
+      <Image condition="end with">\rclone.exe</Image>
+      <Image condition="end with">\winscp.exe</Image>
+      <Image condition="end with">\winrar.exe</Image>
+      <Image condition="end with">\rar.exe</Image>
+      <Image condition="end with">\7z.exe</Image>
+    </ProcessTerminate>
+
+    <!-- Event ID 6: Driver Load - unsigned, invalid, or non-standard driver loads. -->
+    <DriverLoad onmatch="include">
+      <Signature condition="is">Unsigned</Signature>
+      <SignatureStatus condition="is not">Valid</SignatureStatus>
+      <ImageLoaded condition="not begin with">C:\Windows\</ImageLoaded>
+    </DriverLoad>
+
+    <!-- Event ID 7: Image Load - targeted only. Full DLL load logging is too noisy. -->
+    <ImageLoad onmatch="include">
+      <ImageLoaded condition="begin with">C:\Users\Public\</ImageLoaded>
+      <ImageLoaded condition="begin with">C:\ProgramData\</ImageLoaded>
+      <ImageLoaded condition="contains">\Temp\</ImageLoaded>
+      <ImageLoaded condition="contains">\Downloads\</ImageLoaded>
+      <ImageLoaded condition="end with">\System.Management.Automation.dll</ImageLoaded>
+      <ImageLoaded condition="end with">\clr.dll</ImageLoaded>
+      <ImageLoaded condition="end with">\amsi.dll</ImageLoaded>
+      <ImageLoaded condition="end with">\lsasrv.dll</ImageLoaded>
+      <ImageLoaded condition="end with">\wdigest.dll</ImageLoaded>
+      <ImageLoaded condition="end with">\kerberos.dll</ImageLoaded>
+      <ImageLoaded condition="end with">\msv1_0.dll</ImageLoaded>
+      <ImageLoaded condition="end with">\vaultcli.dll</ImageLoaded>
+      <ImageLoaded condition="end with">\samlib.dll</ImageLoaded>
+      <ImageLoaded condition="end with">\ntdsapi.dll</ImageLoaded>
+    </ImageLoad>
+
+    <!-- Event ID 8: Create Remote Thread - injection visibility. -->
+    <CreateRemoteThread onmatch="exclude" />
+
+    <!-- Event ID 9: Raw Access Read - raw disk/volume reads. -->
+    <RawAccessRead onmatch="exclude" />
+
+    <!--
+      Event ID 10: Process Access - credential/process theft targets. Logs only; does not block access.
+
+      v8 Event ID 10 balancing based on local 30-minute telemetry review:
+        - Removed wmiprvse.exe target: generated the largest Task Manager flood.
+        - Removed winlogon.exe target: high Task Manager noise.
+        - Removed powershell.exe/pwsh.exe targets: high Defender/WMI/Task Manager noise.
+        - Removed services.exe target: lower-value target noise; service creation/tampering remains covered by process, file, and registry events.
+
+      Kept high-value credential/security targets:
+        - lsass.exe: credential dumping and handle-access review.
+        - lsaiso.exe: Credential Guard/isolated LSA environments.
+        - samss.exe: SAM/security account process access.
+    -->
+    <ProcessAccess onmatch="include">
+      <TargetImage condition="end with">\lsass.exe</TargetImage>
+      <TargetImage condition="end with">\lsaiso.exe</TargetImage>
+      <TargetImage condition="end with">\samss.exe</TargetImage>
+    </ProcessAccess>
+
+    <!-- Event ID 11: File Create - targeted DFIR artifacts and staging paths. -->
+    <FileCreate onmatch="include">
+      <TargetFilename condition="begin with">C:\ProgramData\</TargetFilename>
+      <TargetFilename condition="begin with">C:\Windows\Temp\</TargetFilename>
+      <TargetFilename condition="contains">\Temp\</TargetFilename>
+      <TargetFilename condition="begin with">C:\Users\Public\</TargetFilename>
+      <TargetFilename condition="contains">\Downloads\</TargetFilename>
+      <TargetFilename condition="contains">\$Recycle.Bin\</TargetFilename>
+      <TargetFilename condition="contains">\Start Menu\Programs\Startup\</TargetFilename>
+      <TargetFilename condition="begin with">C:\Windows\System32\Tasks\</TargetFilename>
+      <TargetFilename condition="begin with">C:\Windows\SysWOW64\Tasks\</TargetFilename>
+      <TargetFilename condition="begin with">C:\Windows\System32\wbem\Repository\</TargetFilename>
+      <TargetFilename condition="end with">.exe</TargetFilename>
+      <TargetFilename condition="end with">.dll</TargetFilename>
+      <TargetFilename condition="end with">.scr</TargetFilename>
+      <TargetFilename condition="end with">.com</TargetFilename>
+      <TargetFilename condition="end with">.cpl</TargetFilename>
+      <TargetFilename condition="end with">.ocx</TargetFilename>
+      <TargetFilename condition="end with">.sys</TargetFilename>
+      <TargetFilename condition="end with">.msi</TargetFilename>
+      <TargetFilename condition="end with">.msp</TargetFilename>
+      <TargetFilename condition="end with">.ps1</TargetFilename>
+      <TargetFilename condition="end with">.psm1</TargetFilename>
+      <TargetFilename condition="end with">.psd1</TargetFilename>
+      <TargetFilename condition="end with">.vbs</TargetFilename>
+      <TargetFilename condition="end with">.vbe</TargetFilename>
+      <TargetFilename condition="end with">.js</TargetFilename>
+      <TargetFilename condition="end with">.jse</TargetFilename>
+      <TargetFilename condition="end with">.wsf</TargetFilename>
+      <TargetFilename condition="end with">.wsh</TargetFilename>
+      <TargetFilename condition="end with">.hta</TargetFilename>
+      <TargetFilename condition="end with">.bat</TargetFilename>
+      <TargetFilename condition="end with">.cmd</TargetFilename>
+      <TargetFilename condition="end with">.zip</TargetFilename>
+      <TargetFilename condition="end with">.7z</TargetFilename>
+      <TargetFilename condition="end with">.rar</TargetFilename>
+      <TargetFilename condition="end with">.tar</TargetFilename>
+      <TargetFilename condition="end with">.gz</TargetFilename>
+      <TargetFilename condition="end with">.tgz</TargetFilename>
+      <TargetFilename condition="end with">.cab</TargetFilename>
+      <TargetFilename condition="end with">.iso</TargetFilename>
+      <TargetFilename condition="end with">.img</TargetFilename>
+      <TargetFilename condition="end with">.vhd</TargetFilename>
+      <TargetFilename condition="end with">.vhdx</TargetFilename>
+      <TargetFilename condition="end with">\ntds.dit</TargetFilename>
+      <TargetFilename condition="end with">\config\SAM</TargetFilename>
+      <TargetFilename condition="end with">\config\SECURITY</TargetFilename>
+      <TargetFilename condition="end with">\config\SYSTEM</TargetFilename>
+      <TargetFilename condition="contains">\lsass.dmp</TargetFilename>
+      <TargetFilename condition="contains">lsass.zip</TargetFilename>
+      <TargetFilename condition="contains">lsass.rar</TargetFilename>
+      <TargetFilename condition="contains">lsass.7z</TargetFilename>
+      <TargetFilename condition="contains">procdump</TargetFilename>
+      <TargetFilename condition="contains">nanodump</TargetFilename>
+      <TargetFilename condition="contains">comsvcs</TargetFilename>
+      <TargetFilename condition="contains">ntdsutil</TargetFilename>
+      <TargetFilename condition="contains">diskshadow</TargetFilename>
+      <TargetFilename condition="contains">vssadmin</TargetFilename>
+      <TargetFilename condition="contains">adusers</TargetFilename>
+      <TargetFilename condition="contains">adcomp</TargetFilename>
+      <TargetFilename condition="contains">bloodhound</TargetFilename>
+      <TargetFilename condition="contains">sharphound</TargetFilename>
+      <TargetFilename condition="contains">domain_users</TargetFilename>
+      <TargetFilename condition="contains">domain_computers</TargetFilename>
+      <TargetFilename condition="contains">trusts.json</TargetFilename>
+      <TargetFilename condition="contains">sessions.json</TargetFilename>
+      <TargetFilename condition="contains">local_admins</TargetFilename>
+    </FileCreate>
+
+    <!-- Event IDs 12/13/14: Registry Events - persistence and security-sensitive settings. -->
+    <RegistryEvent onmatch="include">
+      <TargetObject condition="contains">\Microsoft\Windows\CurrentVersion\Run</TargetObject>
+      <TargetObject condition="contains">\Microsoft\Windows\CurrentVersion\RunOnce</TargetObject>
+      <TargetObject condition="contains">\Microsoft\Windows\CurrentVersion\Policies\Explorer\Run</TargetObject>
+      <TargetObject condition="contains">\Microsoft\Windows NT\CurrentVersion\Winlogon</TargetObject>
+      <TargetObject condition="contains">\Microsoft\Windows NT\CurrentVersion\Image File Execution Options</TargetObject>
+      <TargetObject condition="contains">\Microsoft\Windows NT\CurrentVersion\SilentProcessExit</TargetObject>
+      <TargetObject condition="contains">\Microsoft\Windows NT\CurrentVersion\Windows\AppInit_DLLs</TargetObject>
+      <TargetObject condition="contains">\Control\Session Manager\AppCertDlls</TargetObject>
+      <TargetObject condition="contains">\Control\Session Manager\KnownDLLs</TargetObject>
+      <TargetObject condition="contains">\CurrentControlSet\Services\</TargetObject>
+      <TargetObject condition="contains">\Microsoft\Windows NT\CurrentVersion\Schedule\TaskCache\</TargetObject>
+      <TargetObject condition="contains">\Control\Print\Monitors\</TargetObject>
+      <TargetObject condition="contains">\Control\SafeBoot\</TargetObject>
+      <TargetObject condition="contains">\shell\open\command</TargetObject>
+      <TargetObject condition="contains">\Software\Classes\CLSID\</TargetObject>
+      <TargetObject condition="contains">\Control\Terminal Server\</TargetObject>
+      <TargetObject condition="contains">\Terminal Server\WinStations\RDP-Tcp\</TargetObject>
+      <TargetObject condition="contains">\Services\SharedAccess\Parameters\FirewallPolicy\</TargetObject>
+      <TargetObject condition="contains">\Microsoft\Windows Defender\</TargetObject>
+      <TargetObject condition="contains">\Microsoft\PowerShell\</TargetObject>
+      <TargetObject condition="contains">\Microsoft\Windows\PowerShell\ScriptBlockLogging</TargetObject>
+      <TargetObject condition="contains">\Microsoft\Windows\PowerShell\Transcription</TargetObject>
+      <TargetObject condition="contains">\Microsoft\Windows\CurrentVersion\Policies\System</TargetObject>
+      <TargetObject condition="contains">\Control\Lsa\</TargetObject>
+      <TargetObject condition="contains">\Control\SecurityProviders\</TargetObject>
+    </RegistryEvent>
+
+    <!-- Event ID 15: FileCreateStreamHash - alternate data streams. -->
+    <FileCreateStreamHash onmatch="exclude" />
+
+    <!-- Event IDs 17/18: Pipe Events - offensive-tool and suspicious pipe names. -->
+    <PipeEvent onmatch="include">
+      <PipeName condition="contains">\msagent_</PipeName>
+      <PipeName condition="contains">\postex_</PipeName>
+      <PipeName condition="contains">\MSSE-</PipeName>
+      <PipeName condition="contains">\msse-</PipeName>
+      <PipeName condition="contains">\spoolss_</PipeName>
+      <PipeName condition="contains">\ntsvcs_</PipeName>
+      <PipeName condition="contains">\scerpc_</PipeName>
+      <PipeName condition="contains">\RemCom_</PipeName>
+      <PipeName condition="contains">\PAExec</PipeName>
+      <PipeName condition="contains">\psexec</PipeName>
+      <PipeName condition="contains">\svcctl</PipeName>
+      <PipeName condition="contains">\atsvc</PipeName>
+      <PipeName condition="contains">\meterpreter</PipeName>
+      <PipeName condition="contains">\beacon</PipeName>
+      <PipeName condition="contains">\mojo</PipeName>
+    </PipeEvent>
+
+    <!-- Event IDs 19/20/21: WMI Persistence. -->
+    <WmiEvent onmatch="exclude" />
+
+    <!-- Event ID 22: DNS Query - useful for C2 and timeline reconstruction. -->
+    <DnsQuery onmatch="exclude">
+      <QueryName condition="is">wpad</QueryName>
+      <QueryName condition="is">localhost</QueryName>
+      <QueryName condition="end with">.in-addr.arpa</QueryName>
+      <QueryName condition="end with">.ip6.arpa</QueryName>
+    </DnsQuery>
+
+    <!-- Event ID 25: Process Tampering. -->
+    <ProcessTampering onmatch="exclude" />
+
+    <!-- Event ID 26: File Delete Detected - logs selected deletes only; does not archive deleted files. -->
+    <FileDeleteDetected onmatch="include">
+      <TargetFilename condition="end with">.exe</TargetFilename>
+      <TargetFilename condition="end with">.dll</TargetFilename>
+      <TargetFilename condition="end with">.scr</TargetFilename>
+      <TargetFilename condition="end with">.com</TargetFilename>
+      <TargetFilename condition="end with">.cpl</TargetFilename>
+      <TargetFilename condition="end with">.ocx</TargetFilename>
+      <TargetFilename condition="end with">.sys</TargetFilename>
+      <TargetFilename condition="end with">.msi</TargetFilename>
+      <TargetFilename condition="end with">.msp</TargetFilename>
+      <TargetFilename condition="end with">.ps1</TargetFilename>
+      <TargetFilename condition="end with">.bat</TargetFilename>
+      <TargetFilename condition="end with">.cmd</TargetFilename>
+      <TargetFilename condition="end with">.vbs</TargetFilename>
+      <TargetFilename condition="end with">.js</TargetFilename>
+      <TargetFilename condition="end with">.hta</TargetFilename>
+      <TargetFilename condition="end with">.zip</TargetFilename>
+      <TargetFilename condition="end with">.7z</TargetFilename>
+      <TargetFilename condition="end with">.rar</TargetFilename>
+      <TargetFilename condition="end with">.iso</TargetFilename>
+      <TargetFilename condition="end with">.img</TargetFilename>
+      <TargetFilename condition="end with">.vhd</TargetFilename>
+      <TargetFilename condition="end with">.vhdx</TargetFilename>
+      <TargetFilename condition="contains">ntds.dit</TargetFilename>
+      <TargetFilename condition="contains">lsass.dmp</TargetFilename>
+      <TargetFilename condition="contains">procdump</TargetFilename>
+      <TargetFilename condition="contains">nanodump</TargetFilename>
+      <TargetFilename condition="contains">adusers</TargetFilename>
+      <TargetFilename condition="contains">adcomp</TargetFilename>
+      <TargetFilename condition="contains">bloodhound</TargetFilename>
+      <TargetFilename condition="contains">sharphound</TargetFilename>
+      <TargetFilename condition="begin with">C:\ProgramData\</TargetFilename>
+      <TargetFilename condition="begin with">C:\Windows\Temp\</TargetFilename>
+      <TargetFilename condition="contains">\Temp\</TargetFilename>
+      <TargetFilename condition="begin with">C:\Windows\System32\Tasks\</TargetFilename>
+    </FileDeleteDetected>
+
+  </EventFiltering>
+</Sysmon>
