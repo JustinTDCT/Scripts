@@ -2,12 +2,13 @@
 <Sysmon schemaversion="4.90">
   <!-- 
 SYSMON DFIR LOGGING BASELINE
-Version: 2026.09.06-passive.1
+Version: 2026.09.06-passive.2
 Based on the supplied 2026.03.23 configuration; revised for lower-volume DFIR.
 
 NONBLOCKING REQUIREMENT
   FileBlockExecutable (27) and FileBlockShredding (28) are explicitly DISABLED.
-  FileDelete archiving (23), CopyOnDeletePE and clipboard capture (24) are OFF.
+  FileDelete archiving (23) and clipboard capture (24) are OFF.
+  Legacy CopyOnDelete globals are omitted for current Sysmon compatibility.
   No copy-on-delete SID, extension or process selectors are configured.
   Event 26 records selected deletions; it does not preserve deleted files.
   Event 29 records executable creation; it does not block executable writes.
@@ -50,7 +51,8 @@ APPLY TO AN EXISTING INSTALLATION (elevated terminal; use the actual binary path
   Keep the previous production configuration available before changing it.
   Schema 4.90 is retained from the source. Schema and executable versions differ.
   Check the installed build with sysmon64.exe -s; do not bypass a schema error.
-  Reviewed statically; this file has not been executed by Sysmon on a Windows host.
+  Validated against the embedded 4.90 and 4.91 DTDs from Sysmon 15.21.
+  This file has not been executed by Sysmon on a Windows host in this review.
 
 REFERENCES (event semantics and rule syntax; the collection choices are local)
   https://learn.microsoft.com/en-us/sysinternals/downloads/sysmon
@@ -62,8 +64,7 @@ REFERENCES (event semantics and rule syntax; the collection choices are local)
   <CheckRevocation>false</CheckRevocation>
   <!-- Disables reverse DNS enrichment, not Event 22 DNS-query logging. -->
   <DnsLookup>false</DnsLookup>
-  <!-- Explicitly disable PE copy-on-delete. ArchiveDirectory and other copy selectors are absent. -->
-  <CopyOnDeletePE>false</CopyOnDeletePE>
+  <!-- Archiving is disabled by the empty FileDelete include below. Omit obsolete CopyOnDelete globals. -->
   <EventFiltering>
     <!-- ID 1: Broad process/parent/command-line history. No RMM-parent exclusions. -->
     <RuleGroup name="ProcessCreate_exclude" groupRelation="or">
