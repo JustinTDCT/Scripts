@@ -1,777 +1,597 @@
-<!--
-================================================================================
-  SYSMON CONFIGURATION - DFIR & MITRE ATT&CK FOCUSED
-================================================================================
-  Version:        2026.03.23
-  Schema:         4.90  (Sysmon 15.x+)
-  Purpose:        Maximum forensic telemetry for DFIR investigations,
-                  MITRE ATT&CK technique detection, data exfiltration
-                  monitoring, and process/command-line insight capture
-                  (comparable to Huntress Process Insights).
-
-  PHILOSOPHY:
-    This config follows an "exclude-only" (verbose) approach. Every Sysmon
-    event type is ENABLED by default; we then surgically exclude known-good
-    noise. This ensures that if an attacker uses a novel technique or an
-    unrecognized binary, it is still logged. The trade-off is higher log
-    volume — plan your log pipeline and retention accordingly.
-
-  DEPLOYMENT:
-    Install:   sysmon64 -accepteula -i sysmonconfig.xml
-    Update:    sysmon64 -c sysmonconfig.xml
-    Uninstall: sysmon64 -u
-
-  TUNING NOTES:
-    * After deployment, monitor log volume for 48-72 hours.
-    * Add environment-specific exclusions (LOB apps, build servers, etc.)
-      inside the clearly marked TUNING sections below.
-    * Do NOT exclude processes solely by name — always combine with path
-      to prevent masquerading (T1036).
-    * Test changes in a staging environment before pushing to production.
-
-  CHANGELOG (2026.03.23):
-    * FIXED Event ID 3:  Removed svchost.exe port 443 exclusion.
-      svchost on 443 is a well-known C2 channel; filter noise at
-      the SIEM layer (Wazuh) instead of dropping it at the source.
-    * FIXED Event ID 26: Removed overly broad C:\Users\ exclusion
-      that was silently dropping ALL file deletion events under user
-      profiles due to OR logic.  Replaced with targeted .tmp and
-      browser cache exclusions that preserve attacker tool deletion
-      visibility.
-    * REMOVED Event ID 27 (FileBlockExecutable): Previous OR logic
-      globally blocked ALL .exe writes, breaking Defender/DISM/installers.
-      Event ID 29 provides detection-only coverage instead.
-    * COMMENTED OUT Event ID 28 (FileBlockShredding): Previous config
-      blocked all shredding operations.  Uncomment only if intentional.
-
-  MITRE ATT&CK COVERAGE SUMMARY (non-exhaustive):
-    TA0001 Initial Access        - File creation in user-writable paths
-    TA0002 Execution             - Process creation, WMI, scripting engines
-    TA0003 Persistence           - Registry, scheduled tasks, WMI subs, drivers
-    TA0004 Privilege Escalation  - Named pipes, token manipulation indicators
-    TA0005 Defense Evasion       - Timestomping, process hollowing, image loads
-    TA0006 Credential Access     - LSASS access, SAM hive access
-    TA0007 Discovery             - Network enumeration tools, system commands
-    TA0008 Lateral Movement      - PsExec pipes, RDP, WMI remote
-    TA0009 Collection            - Clipboard, archive utilities
-    TA0010 Exfiltration          - DNS queries, network connections, raw disk
-    TA0011 Command and Control   - DNS beaconing, unusual network connections
-    TA0040 Impact                - File encryption, file deletion/shredding
-
-  REFERENCES:
-    - SwiftOnSecurity/sysmon-config
-    - olafhartong/sysmon-modular
-    - trustedsec/SysmonCommunityGuide
-    - MITRE ATT&CK Enterprise Matrix v15
-    - Microsoft Sysmon documentation (learn.microsoft.com)
-================================================================================
--->
-
+<?xml version='1.0' encoding='utf-8'?>
 <Sysmon schemaversion="4.90">
+  <!-- 
+SYSMON DFIR LOGGING BASELINE
+Version: 2026.09.06-passive.1
+Based on the supplied 2026.03.23 configuration; revised for lower-volume DFIR.
 
-  <!--
-  ============================================================================
-    GLOBAL SETTINGS
-  ============================================================================
-  -->
-  <!-- Log ALL hash types for maximum forensic correlation (VirusTotal, NIST NSRL, etc.) -->
-  <HashAlgorithms>md5,sha256,imphash</HashAlgorithms>
+NONBLOCKING REQUIREMENT
+  FileBlockExecutable (27) and FileBlockShredding (28) are explicitly DISABLED.
+  FileDelete archiving (23), CopyOnDeletePE and clipboard capture (24) are OFF.
+  No copy-on-delete SID, extension or process selectors are configured.
+  Event 26 records selected deletions; it does not preserve deleted files.
+  Event 29 records executable creation; it does not block executable writes.
+  Do not add blocking rules or change the empty includes for IDs 23, 24, 27, 28.
 
-  <!-- Disable CRL checks to avoid performance hit and network dependency -->
+COLLECTION CHANGES
+  Fixed the Event 11 drive-colon catch-all; ADS evidence uses Event 15.
+  Kept broad process creation; only paired Windows Search helpers are excluded.
+  Removed parent-only ngen and blanket conhost/Sysmon process exclusions.
+  Disabled process termination (5) and DLL/image loading (7) for this baseline.
+  Restricted process access (10) to LSASS; removed global access-mask matches.
+  Targeted file creation, timestamps and deletion; no entire Temp tree capture.
+  Narrowed Office, service, COM, session and network registry collection.
+  Narrowed named pipes; removed all-user-profile and generic RPC catch-alls.
+  Removed svchost exclusions from thread creation, raw reads and PE creation.
+  Removed broad Microsoft/CDN DNS exclusions and retained network attribution.
+  Changed hashing to SHA256; reverse DNS and revocation lookups remain off.
+
+TRADEOFFS AND TUNING
+  This is telemetry, not a malicious/benign verdict or a complete EDR replacement.
+  IDs 5 and 7 are off: exact process end times and per-module load history are lost.
+  File, registry and pipe includes deliberately omit activity outside their scope.
+  Scoped service-writer exclusions omit some legitimate servicing activity and
+  could also hide misuse that meets exactly the same writer and destination rule.
+  Network/DNS and IDs 8/9 retain useful visibility. Some restored categories may
+  increase in volume. No destination, management-agent or backup-agent allowlist
+  has been invented without event samples from this environment.
+  Exclusion rules must identify a narrow behavior with explicit AND conditions.
+  Do not exclude all RMM children, browsers, HTTPS, internal IPs or cloud domains.
+  Low event volume does not guarantee zero CPU, memory, driver or disk overhead.
+  Compare workload responsiveness and event volume over 48 to 72 hours, including
+  software updates and backups. Configure bounded local log retention separately.
+  Disabling archiving does not remove copies already saved by the old config.
+  Protect access to logs: command lines and named streams can contain sensitive data.
+
+APPLY TO AN EXISTING INSTALLATION (elevated terminal; use the actual binary path)
+  sysmon64.exe -c sysmon-dfir-passive.xml
+  sysmon64.exe -c
+  The first command applies this file; the second displays the loaded settings.
+  Keep the previous production configuration available before changing it.
+  Schema 4.90 is retained from the source. Schema and executable versions differ.
+  Check the installed build with sysmon64.exe -s; do not bypass a schema error.
+  Reviewed statically; this file has not been executed by Sysmon on a Windows host.
+
+REFERENCES (event semantics and rule syntax; the collection choices are local)
+  https://learn.microsoft.com/en-us/sysinternals/downloads/sysmon
+  https://github.com/trustedsec/SysmonCommunityGuide/blob/master/chapters/file-create.md
+ -->
+  <!-- SHA256 only. Add another hash only when the investigation workflow needs it. -->
+  <HashAlgorithms>SHA256</HashAlgorithms>
+  <!-- Controls signature revocation lookups; false sacrifices revocation enrichment. -->
   <CheckRevocation>false</CheckRevocation>
-
-  <!-- Enable DNS lookup logging -->
+  <!-- Disables reverse DNS enrichment, not Event 22 DNS-query logging. -->
   <DnsLookup>false</DnsLookup>
-
-  <!-- Archive deleted files for forensic recovery (Event ID 23)
-       NOTE: Sysmon only accepts a single folder name here (no path separators).
-       It creates this directory at the root of each drive (e.g. C:\SysmonArchive). -->
-  <ArchiveDirectory>SysmonArchive</ArchiveDirectory>
-
-  <!--
-  ============================================================================
-    EVENT FILTERING
-  ============================================================================
-    Strategy: exclude-only.  Every event type defaults to logging everything;
-    we only carve out well-understood, verified-benign noise below.
-  ============================================================================
-  -->
+  <!-- Explicitly disable PE copy-on-delete. ArchiveDirectory and other copy selectors are absent. -->
+  <CopyOnDeletePE>false</CopyOnDeletePE>
   <EventFiltering>
-
-    <!--
-    ==========================================================================
-      EVENT ID 1 — PROCESS CREATION  (T1059, T1106, T1053, T1204, T1569)
-    ==========================================================================
-      This is the single most important event for DFIR.  Captures full
-      command lines, parent process chains, user context, hashes, and
-      integrity levels.  Equivalent to Huntress Process Insights.
-    ==========================================================================
-    -->
-    <RuleGroup name="ProcessCreate_Excludes" groupRelation="or">
+    <!-- ID 1: Broad process/parent/command-line history. No RMM-parent exclusions. -->
+    <RuleGroup name="ProcessCreate_exclude" groupRelation="or">
       <ProcessCreate onmatch="exclude">
-        <!--
-        ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-          TUNING: Add your environment-specific benign process noise here.
-          ALWAYS match on BOTH Image path AND ParentImage to prevent
-          masquerading bypasses.  Never exclude on Image name alone.
-        ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-        -->
-
-        <!-- Windows background noise — verified benign by path -->
-        <Image condition="is">C:\Windows\System32\conhost.exe</Image>
-
-        <!-- Sysmon self-telemetry -->
-        <Image condition="is">C:\Windows\System32\sysmon64.exe</Image>
-        <Image condition="is">C:\Windows\System32\sysmon.exe</Image>
-
-        <!-- Search indexer noise (high volume, low value) -->
-        <Image condition="is">C:\Windows\System32\SearchProtocolHost.exe</Image>
-        <Image condition="is">C:\Windows\System32\SearchFilterHost.exe</Image>
-
-        <!-- .NET optimization (ngen) — very noisy on patching days -->
-        <ParentImage condition="is">C:\Windows\Microsoft.NET\Framework64\v4.0.30319\ngen.exe</ParentImage>
-        <ParentImage condition="is">C:\Windows\Microsoft.NET\Framework\v4.0.30319\ngen.exe</ParentImage>
+        <Rule name="WindowsSearch_SearchProtocolHost" groupRelation="and">
+          <Image condition="is">C:\Windows\System32\SearchProtocolHost.exe</Image>
+          <ParentImage condition="is">C:\Windows\System32\SearchIndexer.exe</ParentImage>
+        </Rule>
+        <Rule name="WindowsSearch_SearchFilterHost" groupRelation="and">
+          <Image condition="is">C:\Windows\System32\SearchFilterHost.exe</Image>
+          <ParentImage condition="is">C:\Windows\System32\SearchIndexer.exe</ParentImage>
+        </Rule>
+        <!-- Only these exact child/parent pairs are omitted; other children of SearchIndexer remain visible. -->
       </ProcessCreate>
     </RuleGroup>
-
-    <!--
-    ==========================================================================
-      EVENT ID 2 — FILE CREATION TIME CHANGED (T1070.006 - Timestomping)
-    ==========================================================================
-      Detects attackers backdating file timestamps to blend in with
-      legitimate OS files.  Critical for forensic timeline integrity.
-    ==========================================================================
-    -->
-    <RuleGroup name="FileCreateTime_Excludes" groupRelation="or">
-      <FileCreateTime onmatch="exclude">
-        <!-- Windows Installer and patching legitimately modifies timestamps -->
-        <Image condition="is">C:\Windows\System32\msiexec.exe</Image>
-        <Image condition="contains">TiWorker.exe</Image>
-
-        <!-- Chrome and Edge self-update -->
-        <Image condition="begin with">C:\Program Files\Google\Chrome\</Image>
-        <Image condition="begin with">C:\Program Files (x86)\Microsoft\Edge\</Image>
-        <Image condition="begin with">C:\Program Files\Microsoft\Edge\</Image>
+    <!-- ID 2: Timestamp changes on selected payloads and persistence files. -->
+    <RuleGroup name="FileCreateTime_include" groupRelation="or">
+      <FileCreateTime onmatch="include">
+        <TargetFilename condition="contains" name="StartupArtifact">\Start Menu\Programs\Startup\</TargetFilename>
+        <TargetFilename condition="contains" name="ScheduledTaskArtifact">\Windows\System32\Tasks\</TargetFilename>
+        <TargetFilename condition="contains" name="LegacyTaskArtifact">\Windows\Tasks\</TargetFilename>
+        <TargetFilename condition="end with" name="Timestamp_Artifact">.exe</TargetFilename>
+        <TargetFilename condition="end with" name="Timestamp_Artifact">.sys</TargetFilename>
+        <TargetFilename condition="end with" name="Timestamp_Artifact">.scr</TargetFilename>
+        <TargetFilename condition="end with" name="Timestamp_Artifact">.ps1</TargetFilename>
+        <TargetFilename condition="end with" name="Timestamp_Artifact">.psm1</TargetFilename>
+        <TargetFilename condition="end with" name="Timestamp_Artifact">.bat</TargetFilename>
+        <TargetFilename condition="end with" name="Timestamp_Artifact">.cmd</TargetFilename>
+        <TargetFilename condition="end with" name="Timestamp_Artifact">.vbs</TargetFilename>
+        <TargetFilename condition="end with" name="Timestamp_Artifact">.vbe</TargetFilename>
+        <TargetFilename condition="end with" name="Timestamp_Artifact">.jse</TargetFilename>
+        <TargetFilename condition="end with" name="Timestamp_Artifact">.wsf</TargetFilename>
+        <TargetFilename condition="end with" name="Timestamp_Artifact">.wsh</TargetFilename>
+        <TargetFilename condition="end with" name="Timestamp_Artifact">.hta</TargetFilename>
+        <TargetFilename condition="end with" name="Timestamp_Artifact">.cpl</TargetFilename>
+        <TargetFilename condition="end with" name="Timestamp_Artifact">.msi</TargetFilename>
+        <TargetFilename condition="end with" name="Timestamp_Artifact">.reg</TargetFilename>
+        <Rule name="Timestamp_Staged_dll" groupRelation="and">
+          <TargetFilename condition="end with">.dll</TargetFilename>
+          <TargetFilename condition="contains any">\Downloads\;\Desktop\;\Temp\;\PerfLogs\;\Users\Public\</TargetFilename>
+        </Rule>
+        <Rule name="Timestamp_Staged_js" groupRelation="and">
+          <TargetFilename condition="end with">.js</TargetFilename>
+          <TargetFilename condition="contains any">\Downloads\;\Desktop\;\Temp\;\PerfLogs\;\Users\Public\</TargetFilename>
+        </Rule>
+        <Rule name="Timestamp_Staged_lnk" groupRelation="and">
+          <TargetFilename condition="end with">.lnk</TargetFilename>
+          <TargetFilename condition="contains any">\Downloads\;\Desktop\;\Temp\;\PerfLogs\;\Users\Public\</TargetFilename>
+        </Rule>
+        <Rule name="Timestamp_Staged_psd1" groupRelation="and">
+          <TargetFilename condition="end with">.psd1</TargetFilename>
+          <TargetFilename condition="contains any">\Downloads\;\Desktop\;\Temp\;\PerfLogs\;\Users\Public\</TargetFilename>
+        </Rule>
       </FileCreateTime>
     </RuleGroup>
-
-    <!--
-    ==========================================================================
-      EVENT ID 3 — NETWORK CONNECTION  (T1071, T1095, T1048, T1572, T1090)
-    ==========================================================================
-      Logs outbound TCP/UDP connections with source process.  Essential
-      for C2 detection, data exfiltration, and lateral movement tracking.
-
-      CHANGE (2026.03.23): Removed svchost.exe + port 443 exclusion.
-      svchost making HTTPS connections is a well-documented C2 technique
-      (Cobalt Strike, Sliver, custom implants all use svchost as a
-      host process).  The previous exclusion silently dropped ~30% of
-      network events but also blinded detection of svchost-based C2.
-      Filter svchost noise at the SIEM/Wazuh layer instead, where you
-      can apply smarter logic (e.g. exclude by known-good destination
-      IP ranges rather than blanket port exclusion).
-    ==========================================================================
-    -->
-    <RuleGroup name="NetworkConnect_Excludes" groupRelation="or">
-      <NetworkConnect onmatch="exclude">
-        <!--
-        ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-          TUNING: This section will need significant environment-specific
-          tuning.  Start by excluding your known update servers, AV cloud
-          lookups, and internal monitoring agents.
-
-          IMPORTANT: Do NOT exclude svchost.exe here.  It is a common
-          host process for C2 implants.  Filter svchost network noise
-          at the SIEM layer using destination IP/domain allowlists.
-        ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-        -->
-
-        <!-- Sysmon itself -->
-        <Image condition="is">C:\Windows\System32\sysmon64.exe</Image>
-        <Image condition="is">C:\Windows\System32\sysmon.exe</Image>
-      </NetworkConnect>
+    <!-- Bounded Windows servicing exclusions: both writer and destination must match. -->
+    <RuleGroup name="FileCreateTime_exclude" groupRelation="or">
+      <FileCreateTime onmatch="exclude">
+        <Rule name="TrustedInstaller_WinSxS" groupRelation="and">
+          <Image condition="is">C:\Windows\servicing\TrustedInstaller.exe</Image>
+          <TargetFilename condition="begin with">C:\Windows\WinSxS\</TargetFilename>
+        </Rule>
+        <Rule name="TiWorker_WinSxS" groupRelation="and">
+          <Image condition="begin with">C:\Windows\WinSxS\</Image>
+          <Image condition="end with">\TiWorker.exe</Image>
+          <TargetFilename condition="begin with">C:\Windows\WinSxS\</TargetFilename>
+        </Rule>
+        <Rule name="TrustedInstaller_SoftwareDistribution" groupRelation="and">
+          <Image condition="is">C:\Windows\servicing\TrustedInstaller.exe</Image>
+          <TargetFilename condition="begin with">C:\Windows\SoftwareDistribution\</TargetFilename>
+        </Rule>
+        <Rule name="TiWorker_SoftwareDistribution" groupRelation="and">
+          <Image condition="begin with">C:\Windows\WinSxS\</Image>
+          <Image condition="end with">\TiWorker.exe</Image>
+          <TargetFilename condition="begin with">C:\Windows\SoftwareDistribution\</TargetFilename>
+        </Rule>
+      </FileCreateTime>
     </RuleGroup>
-
-    <!--
-    ==========================================================================
-      EVENT ID 5 — PROCESS TERMINATED
-    ==========================================================================
-      Useful for correlating process lifetime and detecting short-lived
-      reconnaissance or staging processes.
-    ==========================================================================
-    -->
-    <RuleGroup name="ProcessTerminate_Excludes" groupRelation="or">
-      <ProcessTerminate onmatch="exclude">
-        <!-- Minimal exclusions — process termination is low-volume and high-value -->
-        <Image condition="is">C:\Windows\System32\conhost.exe</Image>
-      </ProcessTerminate>
+    <!-- ID 3: TCP/UDP connection records with process attribution. Log all; tune from measured samples. -->
+    <RuleGroup name="NetworkConnect_exclude" groupRelation="or">
+      <NetworkConnect onmatch="exclude" />
     </RuleGroup>
-
-    <!--
-    ==========================================================================
-      EVENT ID 6 — DRIVER LOADED  (T1543.003, T1068, LOLDrivers)
-    ==========================================================================
-      Detects loading of kernel drivers including vulnerable/malicious
-      drivers used in BYOVD attacks.
-    ==========================================================================
-    -->
-    <RuleGroup name="DriverLoad_Excludes" groupRelation="or">
-      <DriverLoad onmatch="exclude">
-        <!-- Exclude nothing by default — driver loads are rare and critical.
-             After baselining, you may exclude known-good drivers BY HASH. -->
-      </DriverLoad>
+    <!-- ID 5: Process termination is omitted to reduce per-process records. Empty include matches nothing: disabled. -->
+    <RuleGroup name="ProcessTerminate_include" groupRelation="or">
+      <ProcessTerminate onmatch="include" />
     </RuleGroup>
-
-    <!--
-    ==========================================================================
-      EVENT ID 7 — IMAGE LOADED (DLL)  (T1574.001/002, T1055, T1129)
-    ==========================================================================
-      Detects DLL side-loading, DLL injection, and hijack execution flow.
-      WARNING: This event is EXTREMELY noisy.  The include rules below
-      focus on high-value DLL load scenarios rather than logging everything.
-    ==========================================================================
-    -->
-    <RuleGroup name="ImageLoad_Includes" groupRelation="or">
-      <ImageLoad onmatch="include">
-        <!-- Detect DLLs loaded from suspicious user-writable paths -->
-        <ImageLoaded condition="begin with">C:\Users\</ImageLoaded>
-        <ImageLoaded condition="begin with">C:\ProgramData\</ImageLoaded>
-        <ImageLoaded condition="begin with">C:\Temp\</ImageLoaded>
-        <ImageLoaded condition="contains">\AppData\</ImageLoaded>
-        <ImageLoaded condition="contains">\Downloads\</ImageLoaded>
-        <ImageLoaded condition="contains">\Desktop\</ImageLoaded>
-
-        <!-- WMI and scripting DLLs often abused (T1047, T1059) -->
-        <ImageLoaded condition="end with">wmiutils.dll</ImageLoaded>
-        <ImageLoaded condition="end with">vbscript.dll</ImageLoaded>
-        <ImageLoaded condition="end with">jscript.dll</ImageLoaded>
-        <ImageLoaded condition="end with">jscript9.dll</ImageLoaded>
-        <ImageLoaded condition="end with">scrobj.dll</ImageLoaded>
-        <ImageLoaded condition="end with">scrrun.dll</ImageLoaded>
-        <ImageLoaded condition="end with">amsi.dll</ImageLoaded>
-        <ImageLoaded condition="end with">clr.dll</ImageLoaded>
-        <ImageLoaded condition="end with">clrjit.dll</ImageLoaded>
-        <ImageLoaded condition="end with">mscoree.dll</ImageLoaded>
-
-        <!-- Credential access related DLLs -->
-        <ImageLoaded condition="end with">samlib.dll</ImageLoaded>
-        <ImageLoaded condition="end with">vaultcli.dll</ImageLoaded>
-        <ImageLoaded condition="end with">winscard.dll</ImageLoaded>
-
-        <!-- Unsigned or abnormal DLLs (catch-all for side-loading) -->
-        <Signed condition="is">false</Signed>
-      </ImageLoad>
+    <!-- ID 6: Log all driver loads, including signed drivers; signatures alone are not a trust decision. -->
+    <RuleGroup name="DriverLoad_exclude" groupRelation="or">
+      <DriverLoad onmatch="exclude" />
     </RuleGroup>
-
-    <!--
-    ==========================================================================
-      EVENT ID 8 — CREATE REMOTE THREAD  (T1055 - Process Injection)
-    ==========================================================================
-      Detects when a process creates a thread in another process.
-      Classic indicator of process injection, Cobalt Strike, Meterpreter, etc.
-    ==========================================================================
-    -->
-    <RuleGroup name="CreateRemoteThread_Excludes" groupRelation="or">
-      <CreateRemoteThread onmatch="exclude">
-        <!-- Known legitimate remote thread creators -->
-        <SourceImage condition="is">C:\Windows\System32\csrss.exe</SourceImage>
-        <SourceImage condition="is">C:\Windows\System32\wininit.exe</SourceImage>
-        <SourceImage condition="is">C:\Windows\System32\winlogon.exe</SourceImage>
-        <SourceImage condition="is">C:\Windows\System32\services.exe</SourceImage>
-        <SourceImage condition="is">C:\Windows\System32\lsass.exe</SourceImage>
-        <SourceImage condition="is">C:\Windows\System32\svchost.exe</SourceImage>
-
-        <!-- Visual Studio debugger -->
-        <SourceImage condition="end with">\devenv.exe</SourceImage>
-        <SourceImage condition="end with">\msvsmon.exe</SourceImage>
-      </CreateRemoteThread>
+    <!-- ID 7: DLL/image-load collection is off for the lightweight baseline. Empty include matches nothing: disabled. -->
+    <RuleGroup name="ImageLoad_include" groupRelation="or">
+      <ImageLoad onmatch="include" />
     </RuleGroup>
-
-    <!--
-    ==========================================================================
-      EVENT ID 9 — RAW ACCESS READ  (T1006, T1003)
-    ==========================================================================
-      Detects raw disk reads bypassing the filesystem.  Used for SAM/SYSTEM
-      hive extraction, shadow copy abuse, and data exfiltration of locked files.
-    ==========================================================================
-    -->
-    <RuleGroup name="RawAccessRead_Excludes" groupRelation="or">
+    <!-- ID 8: Log all remote-thread creation. No source-only exemptions for system or debugger processes. -->
+    <RuleGroup name="CreateRemoteThread_exclude" groupRelation="or">
+      <CreateRemoteThread onmatch="exclude" />
+    </RuleGroup>
+    <!-- ID 9: Raw disk-read records. No svchost, VDS or blanket backup-agent exclusion. -->
+    <RuleGroup name="RawAccessRead_exclude" groupRelation="or">
       <RawAccessRead onmatch="exclude">
-        <!-- Windows Defender performs raw reads during scans -->
-        <Image condition="is">C:\Windows\System32\svchost.exe</Image>
-        <Image condition="begin with">C:\ProgramData\Microsoft\Windows Defender\</Image>
-        <Image condition="is">C:\Windows\System32\vds.exe</Image>
+        <Rule name="Defender_PlatformEngine_RawReads" groupRelation="and">
+          <Image condition="begin with">C:\ProgramData\Microsoft\Windows Defender\Platform\</Image>
+          <Image condition="end with">\MsMpEng.exe</Image>
+        </Rule>
+        <!-- Retains a narrower version of the original Defender scan exclusion; applies only to this engine path. -->
       </RawAccessRead>
     </RuleGroup>
-
-    <!--
-    ==========================================================================
-      EVENT ID 10 — PROCESS ACCESS  (T1003.001 - LSASS, T1055)
-    ==========================================================================
-      Detects processes opening handles to other processes.  The most
-      important use case is detecting Mimikatz-style LSASS credential
-      dumping.  Extremely noisy — tightly scoped include rules.
-    ==========================================================================
-    -->
-    <RuleGroup name="ProcessAccess_Includes" groupRelation="or">
+    <!-- ID 10: LSASS access only. Access rights are event evidence, not independent global include rules. -->
+    <RuleGroup name="ProcessAccess_include" groupRelation="or">
       <ProcessAccess onmatch="include">
-        <!-- ===== CREDENTIAL ACCESS: LSASS Memory (T1003.001) ===== -->
-        <TargetImage condition="is">C:\Windows\System32\lsass.exe</TargetImage>
-
-        <!-- ===== CREDENTIAL ACCESS: SAM/Security hive readers ===== -->
-        <TargetImage condition="is">C:\Windows\System32\csrss.exe</TargetImage>
-
-        <!-- ===== PROCESS INJECTION: Suspicious cross-process access ===== -->
-        <!-- Log when non-system processes access other processes with dangerous rights -->
-        <GrantedAccess condition="is">0x1FFFFF</GrantedAccess>  <!-- PROCESS_ALL_ACCESS -->
-        <GrantedAccess condition="is">0x1F0FFF</GrantedAccess>  <!-- PROCESS_ALL_ACCESS (alternate) -->
-        <GrantedAccess condition="is">0x0810</GrantedAccess>    <!-- PROCESS_VM_READ + PROCESS_QUERY_INFO -->
-        <GrantedAccess condition="is">0x0800</GrantedAccess>    <!-- PROCESS_SUSPEND_RESUME -->
-        <GrantedAccess condition="is">0x001F0FFF</GrantedAccess>
-        <GrantedAccess condition="is">0x1010</GrantedAccess>    <!-- PROCESS_VM_READ | QUERY_LIMITED -->
-        <GrantedAccess condition="is">0x0040</GrantedAccess>    <!-- PROCESS_DUP_HANDLE -->
-        <GrantedAccess condition="is">0x1410</GrantedAccess>
-        <GrantedAccess condition="is">0x1438</GrantedAccess>
-        <GrantedAccess condition="is">0x143a</GrantedAccess>
+        <TargetImage condition="end with" name="LSASS_Access">\Windows\System32\lsass.exe</TargetImage>
       </ProcessAccess>
     </RuleGroup>
-
-    <!--
-    ==========================================================================
-      EVENT ID 11 — FILE CREATED  (T1105, T1204, T1059)
-    ==========================================================================
-      Logs file creation.  Focused on user-writable locations, staging
-      directories, and suspicious file types that indicate tool transfer
-      or payload drops.
-    ==========================================================================
-    -->
-    <RuleGroup name="FileCreate_Includes" groupRelation="or">
+    <!-- ID 11: Selected file creation/overwrite evidence. No drive-colon or whole-Temp-tree match. -->
+    <RuleGroup name="FileCreate_include" groupRelation="or">
       <FileCreate onmatch="include">
-        <!-- ===== Executable/script drops in user-writable paths ===== -->
-        <TargetFilename condition="end with">.exe</TargetFilename>
-        <TargetFilename condition="end with">.dll</TargetFilename>
-        <TargetFilename condition="end with">.sys</TargetFilename>
-        <TargetFilename condition="end with">.scr</TargetFilename>
-        <TargetFilename condition="end with">.ps1</TargetFilename>
-        <TargetFilename condition="end with">.psm1</TargetFilename>
-        <TargetFilename condition="end with">.psd1</TargetFilename>
-        <TargetFilename condition="end with">.bat</TargetFilename>
-        <TargetFilename condition="end with">.cmd</TargetFilename>
-        <TargetFilename condition="end with">.vbs</TargetFilename>
-        <TargetFilename condition="end with">.vbe</TargetFilename>
-        <TargetFilename condition="end with">.js</TargetFilename>
-        <TargetFilename condition="end with">.jse</TargetFilename>
-        <TargetFilename condition="end with">.wsf</TargetFilename>
-        <TargetFilename condition="end with">.wsh</TargetFilename>
-        <TargetFilename condition="end with">.hta</TargetFilename>
-        <TargetFilename condition="end with">.cpl</TargetFilename>
-        <TargetFilename condition="end with">.msi</TargetFilename>
-        <TargetFilename condition="end with">.msp</TargetFilename>
-        <TargetFilename condition="end with">.lnk</TargetFilename>
-        <TargetFilename condition="end with">.iso</TargetFilename>
-        <TargetFilename condition="end with">.img</TargetFilename>
-        <TargetFilename condition="end with">.vhd</TargetFilename>
-        <TargetFilename condition="end with">.vhdx</TargetFilename>
-
-        <!-- ===== Persistence locations ===== -->
-        <TargetFilename condition="contains">\Startup\</TargetFilename>
-        <TargetFilename condition="contains">\Start Menu\</TargetFilename>
-
-        <!-- ===== Suspicious staging directories ===== -->
-        <TargetFilename condition="begin with">C:\Windows\Temp\</TargetFilename>
-        <TargetFilename condition="begin with">C:\Temp\</TargetFilename>
-        <TargetFilename condition="contains">\PerfLogs\</TargetFilename>
-        <TargetFilename condition="contains">\Public\</TargetFilename>
-
-        <!-- ===== Alternate Data Streams (T1564.004) ===== -->
-        <TargetFilename condition="contains">:</TargetFilename>
-
-        <!-- ===== Office macro/template drops ===== -->
-        <TargetFilename condition="end with">.docm</TargetFilename>
-        <TargetFilename condition="end with">.xlsm</TargetFilename>
-        <TargetFilename condition="end with">.pptm</TargetFilename>
-        <TargetFilename condition="end with">.dotm</TargetFilename>
-        <TargetFilename condition="end with">.xltm</TargetFilename>
-
-        <!-- ===== Exfiltration staging: archives ===== -->
-        <TargetFilename condition="end with">.zip</TargetFilename>
-        <TargetFilename condition="end with">.rar</TargetFilename>
-        <TargetFilename condition="end with">.7z</TargetFilename>
-        <TargetFilename condition="end with">.tar</TargetFilename>
-        <TargetFilename condition="end with">.gz</TargetFilename>
+        <TargetFilename condition="contains" name="StartupArtifact">\Start Menu\Programs\Startup\</TargetFilename>
+        <TargetFilename condition="contains" name="ScheduledTaskArtifact">\Windows\System32\Tasks\</TargetFilename>
+        <TargetFilename condition="contains" name="LegacyTaskArtifact">\Windows\Tasks\</TargetFilename>
+        <TargetFilename condition="end with" name="Create_Artifact">.exe</TargetFilename>
+        <TargetFilename condition="end with" name="Create_Artifact">.sys</TargetFilename>
+        <TargetFilename condition="end with" name="Create_Artifact">.scr</TargetFilename>
+        <TargetFilename condition="end with" name="Create_Artifact">.ps1</TargetFilename>
+        <TargetFilename condition="end with" name="Create_Artifact">.psm1</TargetFilename>
+        <TargetFilename condition="end with" name="Create_Artifact">.bat</TargetFilename>
+        <TargetFilename condition="end with" name="Create_Artifact">.cmd</TargetFilename>
+        <TargetFilename condition="end with" name="Create_Artifact">.vbs</TargetFilename>
+        <TargetFilename condition="end with" name="Create_Artifact">.vbe</TargetFilename>
+        <TargetFilename condition="end with" name="Create_Artifact">.jse</TargetFilename>
+        <TargetFilename condition="end with" name="Create_Artifact">.wsf</TargetFilename>
+        <TargetFilename condition="end with" name="Create_Artifact">.wsh</TargetFilename>
+        <TargetFilename condition="end with" name="Create_Artifact">.hta</TargetFilename>
+        <TargetFilename condition="end with" name="Create_Artifact">.cpl</TargetFilename>
+        <TargetFilename condition="end with" name="Create_Artifact">.msi</TargetFilename>
+        <TargetFilename condition="end with" name="Create_Artifact">.reg</TargetFilename>
+        <Rule name="Create_Staged_dll" groupRelation="and">
+          <TargetFilename condition="end with">.dll</TargetFilename>
+          <TargetFilename condition="contains any">\Downloads\;\Desktop\;\Temp\;\PerfLogs\;\Users\Public\</TargetFilename>
+        </Rule>
+        <Rule name="Create_Staged_js" groupRelation="and">
+          <TargetFilename condition="end with">.js</TargetFilename>
+          <TargetFilename condition="contains any">\Downloads\;\Desktop\;\Temp\;\PerfLogs\;\Users\Public\</TargetFilename>
+        </Rule>
+        <Rule name="Create_Staged_lnk" groupRelation="and">
+          <TargetFilename condition="end with">.lnk</TargetFilename>
+          <TargetFilename condition="contains any">\Downloads\;\Desktop\;\Temp\;\PerfLogs\;\Users\Public\</TargetFilename>
+        </Rule>
+        <Rule name="Create_Staged_psd1" groupRelation="and">
+          <TargetFilename condition="end with">.psd1</TargetFilename>
+          <TargetFilename condition="contains any">\Downloads\;\Desktop\;\Temp\;\PerfLogs\;\Users\Public\</TargetFilename>
+        </Rule>
+        <Rule name="Create_Staged_msp" groupRelation="and">
+          <TargetFilename condition="end with">.msp</TargetFilename>
+          <TargetFilename condition="contains any">\Downloads\;\Desktop\;\Temp\;\PerfLogs\;\Users\Public\</TargetFilename>
+        </Rule>
+        <Rule name="Create_Staged_zip" groupRelation="and">
+          <TargetFilename condition="end with">.zip</TargetFilename>
+          <TargetFilename condition="contains any">\Downloads\;\Desktop\;\Temp\;\PerfLogs\;\Users\Public\</TargetFilename>
+        </Rule>
+        <Rule name="Create_Staged_rar" groupRelation="and">
+          <TargetFilename condition="end with">.rar</TargetFilename>
+          <TargetFilename condition="contains any">\Downloads\;\Desktop\;\Temp\;\PerfLogs\;\Users\Public\</TargetFilename>
+        </Rule>
+        <Rule name="Create_Staged_7z" groupRelation="and">
+          <TargetFilename condition="end with">.7z</TargetFilename>
+          <TargetFilename condition="contains any">\Downloads\;\Desktop\;\Temp\;\PerfLogs\;\Users\Public\</TargetFilename>
+        </Rule>
+        <Rule name="Create_Staged_tar" groupRelation="and">
+          <TargetFilename condition="end with">.tar</TargetFilename>
+          <TargetFilename condition="contains any">\Downloads\;\Desktop\;\Temp\;\PerfLogs\;\Users\Public\</TargetFilename>
+        </Rule>
+        <Rule name="Create_Staged_gz" groupRelation="and">
+          <TargetFilename condition="end with">.gz</TargetFilename>
+          <TargetFilename condition="contains any">\Downloads\;\Desktop\;\Temp\;\PerfLogs\;\Users\Public\</TargetFilename>
+        </Rule>
+        <Rule name="Create_Staged_iso" groupRelation="and">
+          <TargetFilename condition="end with">.iso</TargetFilename>
+          <TargetFilename condition="contains any">\Downloads\;\Desktop\;\Temp\;\PerfLogs\;\Users\Public\</TargetFilename>
+        </Rule>
+        <Rule name="Create_Staged_img" groupRelation="and">
+          <TargetFilename condition="end with">.img</TargetFilename>
+          <TargetFilename condition="contains any">\Downloads\;\Desktop\;\Temp\;\PerfLogs\;\Users\Public\</TargetFilename>
+        </Rule>
+        <Rule name="Create_Staged_vhd" groupRelation="and">
+          <TargetFilename condition="end with">.vhd</TargetFilename>
+          <TargetFilename condition="contains any">\Downloads\;\Desktop\;\Temp\;\PerfLogs\;\Users\Public\</TargetFilename>
+        </Rule>
+        <Rule name="Create_Staged_vhdx" groupRelation="and">
+          <TargetFilename condition="end with">.vhdx</TargetFilename>
+          <TargetFilename condition="contains any">\Downloads\;\Desktop\;\Temp\;\PerfLogs\;\Users\Public\</TargetFilename>
+        </Rule>
+        <Rule name="Create_Staged_docm" groupRelation="and">
+          <TargetFilename condition="end with">.docm</TargetFilename>
+          <TargetFilename condition="contains any">\Downloads\;\Desktop\;\Temp\;\PerfLogs\;\Users\Public\</TargetFilename>
+        </Rule>
+        <Rule name="Create_Staged_xlsm" groupRelation="and">
+          <TargetFilename condition="end with">.xlsm</TargetFilename>
+          <TargetFilename condition="contains any">\Downloads\;\Desktop\;\Temp\;\PerfLogs\;\Users\Public\</TargetFilename>
+        </Rule>
+        <Rule name="Create_Staged_pptm" groupRelation="and">
+          <TargetFilename condition="end with">.pptm</TargetFilename>
+          <TargetFilename condition="contains any">\Downloads\;\Desktop\;\Temp\;\PerfLogs\;\Users\Public\</TargetFilename>
+        </Rule>
+        <Rule name="Create_Staged_dotm" groupRelation="and">
+          <TargetFilename condition="end with">.dotm</TargetFilename>
+          <TargetFilename condition="contains any">\Downloads\;\Desktop\;\Temp\;\PerfLogs\;\Users\Public\</TargetFilename>
+        </Rule>
+        <Rule name="Create_Staged_xltm" groupRelation="and">
+          <TargetFilename condition="end with">.xltm</TargetFilename>
+          <TargetFilename condition="contains any">\Downloads\;\Desktop\;\Temp\;\PerfLogs\;\Users\Public\</TargetFilename>
+        </Rule>
+        <Rule name="Create_Staged_dmp" groupRelation="and">
+          <TargetFilename condition="end with">.dmp</TargetFilename>
+          <TargetFilename condition="contains any">\Downloads\;\Desktop\;\Temp\;\PerfLogs\;\Users\Public\</TargetFilename>
+        </Rule>
+        <Rule name="Create_Staged_mdmp" groupRelation="and">
+          <TargetFilename condition="end with">.mdmp</TargetFilename>
+          <TargetFilename condition="contains any">\Downloads\;\Desktop\;\Temp\;\PerfLogs\;\Users\Public\</TargetFilename>
+        </Rule>
+        <TargetFilename condition="end with" name="HostsFileChange">\Windows\System32\drivers\etc\hosts</TargetFilename>
+        <!-- DLLs, JS, shortcuts, archives, disk images, macro documents and dumps require a staged path AND extension. -->
       </FileCreate>
     </RuleGroup>
-
-    <!--
-    ==========================================================================
-      EVENT ID 12/13/14 — REGISTRY EVENTS  (T1547.001, T1546, T1112, T1562)
-    ==========================================================================
-      Registry is the backbone of Windows persistence.  These events
-      capture key creation/deletion (12), value set (13), and rename (14).
-    ==========================================================================
-    -->
-    <RuleGroup name="RegistryEvent_Includes" groupRelation="or">
+    <!-- IDs 12/13/14: Selected persistence and security configuration changes. -->
+    <RuleGroup name="RegistryEvent_include" groupRelation="or">
       <RegistryEvent onmatch="include">
-        <!-- ===== Run/RunOnce persistence (T1547.001) ===== -->
-        <TargetObject condition="contains">\CurrentVersion\Run</TargetObject>
-        <TargetObject condition="contains">\CurrentVersion\RunOnce</TargetObject>
-        <TargetObject condition="contains">\CurrentVersion\RunOnceEx</TargetObject>
-        <TargetObject condition="contains">\CurrentVersion\RunServices</TargetObject>
-
-        <!-- ===== Winlogon persistence (T1547.004) ===== -->
-        <TargetObject condition="contains">\Microsoft\Windows NT\CurrentVersion\Winlogon\</TargetObject>
-
-        <!-- ===== Image File Execution Options (T1546.012 - Debugger) ===== -->
-        <TargetObject condition="contains">\CurrentVersion\Image File Execution Options\</TargetObject>
-
-        <!-- ===== AppInit DLLs (T1546.010) ===== -->
-        <TargetObject condition="contains">\Microsoft\Windows NT\CurrentVersion\Windows\AppInit_DLLs</TargetObject>
-
-        <!-- ===== Services (T1543.003) ===== -->
-        <TargetObject condition="contains">\CurrentControlSet\Services\</TargetObject>
-
-        <!-- ===== Scheduled Tasks registry (T1053.005) ===== -->
-        <TargetObject condition="contains">\Software\Microsoft\Windows NT\CurrentVersion\Schedule\TaskCache\</TargetObject>
-
-        <!-- ===== Security descriptor tampering (T1562) ===== -->
-        <TargetObject condition="contains">\SECURITY\</TargetObject>
-        <TargetObject condition="contains">\SAM\SAM\</TargetObject>
-
-        <!-- ===== COM Object Hijacking (T1546.015) ===== -->
-        <TargetObject condition="contains">\Classes\CLSID\</TargetObject>
-        <TargetObject condition="contains">\Classes\Wow6432Node\CLSID\</TargetObject>
-
-        <!-- ===== Shell Extensions / Explorer persistence ===== -->
-        <TargetObject condition="contains">\ShellServiceObjectDelayLoad</TargetObject>
-        <TargetObject condition="contains">\Explorer\ShellIconOverlayIdentifiers</TargetObject>
-        <TargetObject condition="contains">\Shell\Open\Command</TargetObject>
-        <TargetObject condition="contains">\Explorer\Browser Helper Objects</TargetObject>
-
-        <!-- ===== Office Trust Records / Macro settings ===== -->
-        <TargetObject condition="contains">\VBAWarnings</TargetObject>
-        <TargetObject condition="contains">\Security\Trusted Documents\</TargetObject>
-        <TargetObject condition="contains">\Office\</TargetObject>
-
-        <!-- ===== Security tool tampering (T1562.001) ===== -->
-        <TargetObject condition="contains">\Policies\Microsoft\Windows Defender</TargetObject>
-        <TargetObject condition="contains">\Windows Defender\Exclusions</TargetObject>
-        <TargetObject condition="contains">\Policies\Microsoft\Windows\EventLog</TargetObject>
-
-        <!-- ===== Accessibility Features persistence (T1546.008) ===== -->
-        <TargetObject condition="contains">\Accessibility</TargetObject>
-
-        <!-- ===== LSA / Authentication providers ===== -->
-        <TargetObject condition="contains">\CurrentControlSet\Control\Lsa\</TargetObject>
-        <TargetObject condition="contains">\CurrentControlSet\Control\SecurityProviders\</TargetObject>
-
-        <!-- ===== Boot configuration ===== -->
-        <TargetObject condition="contains">\CurrentControlSet\Control\SafeBoot\</TargetObject>
-        <TargetObject condition="contains">\CurrentControlSet\Control\Session Manager\</TargetObject>
-
-        <!-- ===== WMI Persistence (T1546.003) ===== -->
-        <TargetObject condition="contains">\SOFTWARE\Microsoft\Wbem\</TargetObject>
-
-        <!-- ===== PowerShell policy (T1059.001) ===== -->
-        <TargetObject condition="contains">\Microsoft\PowerShell\</TargetObject>
-        <TargetObject condition="contains">\Policies\Microsoft\Windows\PowerShell\</TargetObject>
-
-        <!-- ===== Network settings tampering ===== -->
-        <TargetObject condition="contains">\CurrentControlSet\Services\Tcpip\Parameters\</TargetObject>
-        <TargetObject condition="contains">\CurrentControlSet\Services\Dnscache\</TargetObject>
-
-        <!-- ===== Terminal Server / RDP settings (T1021.001) ===== -->
-        <TargetObject condition="contains">\Terminal Server\</TargetObject>
-        <TargetObject condition="contains">\Terminal Services\</TargetObject>
-
-        <!-- ===== Firewall rules manipulation (T1562.004) ===== -->
-        <TargetObject condition="contains">\Services\SharedAccess\Parameters\FirewallPolicy\</TargetObject>
+        <TargetObject condition="contains" name="RunFamily">\CurrentVersion\Run</TargetObject>
+        <TargetObject condition="contains" name="Winlogon">\Microsoft\Windows NT\CurrentVersion\Winlogon\</TargetObject>
+        <TargetObject condition="contains" name="IFEO">\CurrentVersion\Image File Execution Options\</TargetObject>
+        <TargetObject condition="contains" name="SilentProcessExit">\CurrentVersion\SilentProcessExit\</TargetObject>
+        <TargetObject condition="contains" name="AppInitDLLs">\Microsoft\Windows NT\CurrentVersion\Windows\AppInit_DLLs</TargetObject>
+        <TargetObject condition="contains" name="AppInitEnablement">\Microsoft\Windows NT\CurrentVersion\Windows\LoadAppInit_DLLs</TargetObject>
+        <TargetObject condition="contains" name="TaskCache">\Microsoft\Windows NT\CurrentVersion\Schedule\TaskCache\</TargetObject>
+        <TargetObject condition="contains" name="SecurityHiveChange">\SECURITY\</TargetObject>
+        <TargetObject condition="contains" name="SAMHiveChange">\SAM\SAM\</TargetObject>
+        <TargetObject condition="contains" name="ShellPersistence">\ShellServiceObjectDelayLoad</TargetObject>
+        <TargetObject condition="contains" name="ShellOverlay">\Explorer\ShellIconOverlayIdentifiers</TargetObject>
+        <TargetObject condition="contains" name="FileAssociationCommand">\Shell\Open\Command</TargetObject>
+        <TargetObject condition="contains" name="BrowserHelper">\Explorer\Browser Helper Objects</TargetObject>
+        <TargetObject condition="contains" name="DefenderPolicy">\Policies\Microsoft\Windows Defender</TargetObject>
+        <TargetObject condition="contains" name="DefenderExclusions">\Windows Defender\Exclusions</TargetObject>
+        <TargetObject condition="contains" name="EventLogPolicy">\Policies\Microsoft\Windows\EventLog</TargetObject>
+        <TargetObject condition="contains" name="AccessibilitySettings">\Accessibility</TargetObject>
+        <TargetObject condition="contains" name="LSASettings">\CurrentControlSet\Control\Lsa\</TargetObject>
+        <TargetObject condition="contains" name="SecurityProviders">\CurrentControlSet\Control\SecurityProviders\</TargetObject>
+        <TargetObject condition="contains" name="SafeBoot">\CurrentControlSet\Control\SafeBoot\</TargetObject>
+        <TargetObject condition="contains" name="WMISettings">\SOFTWARE\Microsoft\Wbem\CIMOM</TargetObject>
+        <TargetObject condition="contains" name="PowerShellSettings">\Microsoft\PowerShell\</TargetObject>
+        <TargetObject condition="contains" name="PowerShellPolicy">\Policies\Microsoft\Windows\PowerShell\</TargetObject>
+        <TargetObject condition="contains" name="RDPPolicy">\Policies\Microsoft\Windows NT\Terminal Services\</TargetObject>
+        <TargetObject condition="contains" name="FirewallPolicy">\Services\SharedAccess\Parameters\FirewallPolicy\</TargetObject>
+        <Rule name="Service_Objects_CreateDeleteRename" groupRelation="and">
+          <TargetObject condition="begin with">HKLM\System\CurrentControlSet\Services\</TargetObject>
+          <EventType condition="is any">CreateKey;DeleteKey;RenameKey;DeleteValue;RenameValue</EventType>
+        </Rule>
+        <Rule name="Service_Execution_ImagePath" groupRelation="and">
+          <TargetObject condition="begin with">HKLM\System\CurrentControlSet\Services\</TargetObject>
+          <TargetObject condition="end with">\ImagePath</TargetObject>
+        </Rule>
+        <Rule name="Service_Execution_Start" groupRelation="and">
+          <TargetObject condition="begin with">HKLM\System\CurrentControlSet\Services\</TargetObject>
+          <TargetObject condition="end with">\Start</TargetObject>
+        </Rule>
+        <Rule name="Service_Execution_Type" groupRelation="and">
+          <TargetObject condition="begin with">HKLM\System\CurrentControlSet\Services\</TargetObject>
+          <TargetObject condition="end with">\Type</TargetObject>
+        </Rule>
+        <Rule name="Service_Execution_ObjectName" groupRelation="and">
+          <TargetObject condition="begin with">HKLM\System\CurrentControlSet\Services\</TargetObject>
+          <TargetObject condition="end with">\ObjectName</TargetObject>
+        </Rule>
+        <Rule name="Service_Execution_ServiceDll" groupRelation="and">
+          <TargetObject condition="begin with">HKLM\System\CurrentControlSet\Services\</TargetObject>
+          <TargetObject condition="end with">\Parameters\ServiceDll</TargetObject>
+        </Rule>
+        <Rule name="Service_Execution_ServiceMain" groupRelation="and">
+          <TargetObject condition="begin with">HKLM\System\CurrentControlSet\Services\</TargetObject>
+          <TargetObject condition="end with">\Parameters\ServiceMain</TargetObject>
+        </Rule>
+        <Rule name="Service_Execution_FailureCommand" groupRelation="and">
+          <TargetObject condition="begin with">HKLM\System\CurrentControlSet\Services\</TargetObject>
+          <TargetObject condition="end with">\FailureCommand</TargetObject>
+        </Rule>
+        <Rule name="Service_Execution_FailureActions" groupRelation="and">
+          <TargetObject condition="begin with">HKLM\System\CurrentControlSet\Services\</TargetObject>
+          <TargetObject condition="end with">\FailureActions</TargetObject>
+        </Rule>
+        <Rule name="Service_Execution_DelayedAutoStart" groupRelation="and">
+          <TargetObject condition="begin with">HKLM\System\CurrentControlSet\Services\</TargetObject>
+          <TargetObject condition="end with">\DelayedAutoStart</TargetObject>
+        </Rule>
+        <Rule name="Service_Execution_RequiredPrivileges" groupRelation="and">
+          <TargetObject condition="begin with">HKLM\System\CurrentControlSet\Services\</TargetObject>
+          <TargetObject condition="end with">\RequiredPrivileges</TargetObject>
+        </Rule>
+        <Rule name="Service_Execution_Security" groupRelation="and">
+          <TargetObject condition="begin with">HKLM\System\CurrentControlSet\Services\</TargetObject>
+          <TargetObject condition="end with">\Security\Security</TargetObject>
+        </Rule>
+        <!-- Match COM execution subkeys under HKCR or user Classes paths; do not log every CLSID change. -->
+        <TargetObject condition="contains all" name="COM_Execution">\CLSID\;\InprocServer32</TargetObject>
+        <TargetObject condition="contains all" name="COM_Execution">\CLSID\;\LocalServer32</TargetObject>
+        <TargetObject condition="contains all" name="COM_Execution">\CLSID\;\TreatAs</TargetObject>
+        <TargetObject condition="contains all" name="COM_Execution">\CLSID\;\ScriptletURL</TargetObject>
+        <!-- Office security settings and add-ins only; ordinary Office preferences are omitted. -->
+        <TargetObject condition="contains all" name="Office_Security">\Microsoft\Office\;\Security\</TargetObject>
+        <TargetObject condition="contains all" name="Office_Addins">\Microsoft\Office\;\Addins\</TargetObject>
+        <TargetObject condition="contains" name="SessionManager_Persistence">\CurrentControlSet\Control\Session Manager\BootExecute</TargetObject>
+        <TargetObject condition="contains" name="SessionManager_Persistence">\CurrentControlSet\Control\Session Manager\SetupExecute</TargetObject>
+        <TargetObject condition="contains" name="SessionManager_Persistence">\CurrentControlSet\Control\Session Manager\Execute</TargetObject>
+        <TargetObject condition="contains" name="SessionManager_Persistence">\CurrentControlSet\Control\Session Manager\AppCertDlls</TargetObject>
+        <TargetObject condition="contains" name="SessionManager_Persistence">\CurrentControlSet\Control\Session Manager\KnownDLLs</TargetObject>
+        <Rule name="Network_Configuration_NameServer" groupRelation="and">
+          <TargetObject condition="contains">\CurrentControlSet\Services\Tcpip\Parameters\</TargetObject>
+          <TargetObject condition="end with">\NameServer</TargetObject>
+        </Rule>
+        <Rule name="Network_Configuration_SearchList" groupRelation="and">
+          <TargetObject condition="contains">\CurrentControlSet\Services\Tcpip\Parameters\</TargetObject>
+          <TargetObject condition="end with">\SearchList</TargetObject>
+        </Rule>
+        <Rule name="Network_Configuration_EnableSecurityFilters" groupRelation="and">
+          <TargetObject condition="contains">\CurrentControlSet\Services\Tcpip\Parameters\</TargetObject>
+          <TargetObject condition="end with">\EnableSecurityFilters</TargetObject>
+        </Rule>
+        <Rule name="RDP_fDenyTSConnections" groupRelation="and">
+          <TargetObject condition="contains">\Terminal Server\</TargetObject>
+          <TargetObject condition="end with">\fDenyTSConnections</TargetObject>
+        </Rule>
+        <Rule name="RDP_UserAuthentication" groupRelation="and">
+          <TargetObject condition="contains">\Terminal Server\</TargetObject>
+          <TargetObject condition="end with">\UserAuthentication</TargetObject>
+        </Rule>
+        <Rule name="RDP_SecurityLayer" groupRelation="and">
+          <TargetObject condition="contains">\Terminal Server\</TargetObject>
+          <TargetObject condition="end with">\SecurityLayer</TargetObject>
+        </Rule>
+        <Rule name="RDP_PortNumber" groupRelation="and">
+          <TargetObject condition="contains">\Terminal Server\</TargetObject>
+          <TargetObject condition="end with">\PortNumber</TargetObject>
+        </Rule>
+        <Rule name="RDP_MinEncryptionLevel" groupRelation="and">
+          <TargetObject condition="contains">\Terminal Server\</TargetObject>
+          <TargetObject condition="end with">\MinEncryptionLevel</TargetObject>
+        </Rule>
       </RegistryEvent>
     </RuleGroup>
-
-    <!--
-    ==========================================================================
-      EVENT ID 15 — FILE CREATE STREAM HASH  (T1564.004 - ADS)
-    ==========================================================================
-      Logs Alternate Data Streams and browser download Zone.Identifier
-      (Mark of the Web).  Crucial for tracking internet-sourced payloads.
-    ==========================================================================
-    -->
-    <RuleGroup name="FileCreateStreamHash_Excludes" groupRelation="or">
-      <FileCreateStreamHash onmatch="exclude">
-        <!-- Exclude standard browser temp files that are not ADS-related -->
-        <TargetFilename condition="end with">.partial</TargetFilename>
-      </FileCreateStreamHash>
+    <!-- ID 15: Named-stream evidence, including Zone.Identifier. Hashing can add I/O on large downloads. -->
+    <RuleGroup name="FileCreateStreamHash_exclude" groupRelation="or">
+      <FileCreateStreamHash onmatch="exclude" />
     </RuleGroup>
-
-    <!--
-    ==========================================================================
-      EVENT ID 17 & 18 — PIPE EVENTS  (T1021.002, T1570, T1572)
-    ==========================================================================
-      Named pipes are heavily used in lateral movement tools (PsExec,
-      Cobalt Strike, Metasploit) and for inter-process C2 communication.
-    ==========================================================================
-    -->
-    <RuleGroup name="PipeCreated_Includes" groupRelation="or">
+    <!-- IDs 17/18: Selected tool pipe names and scoped RPC use. Pipe names alone do not prove compromise. -->
+    <RuleGroup name="PipeEvent_include" groupRelation="or">
       <PipeEvent onmatch="include">
-        <!-- ===== Known attacker tool named pipes ===== -->
-        <!-- Cobalt Strike default -->
-        <PipeName condition="begin with">\MSSE-</PipeName>
-        <PipeName condition="begin with">\postex_</PipeName>
-        <PipeName condition="begin with">\postex_ssh_</PipeName>
-        <PipeName condition="begin with">\status_</PipeName>
-
-        <!-- Metasploit / Meterpreter -->
-        <PipeName condition="begin with">\msagent_</PipeName>
-
-        <!-- PsExec (T1569.002) -->
-        <PipeName condition="is">\psexesvc</PipeName>
-        <PipeName condition="begin with">\PSEXESVC</PipeName>
-
-        <!-- CrackMapExec -->
-        <PipeName condition="begin with">\svcctl</PipeName>
-
-        <!-- Windows Remote Management -->
-        <PipeName condition="is">\wkssvc</PipeName>
-        <PipeName condition="is">\srvsvc</PipeName>
-        <PipeName condition="is">\atsvc</PipeName>
-        <PipeName condition="is">\epmapper</PipeName>
-        <PipeName condition="is">\samr</PipeName>
-        <PipeName condition="is">\lsarpc</PipeName>
-        <PipeName condition="is">\netlogon</PipeName>
-
-        <!-- Impacket -->
-        <PipeName condition="begin with">\RemCom</PipeName>
-
-        <!-- Suspicious random-looking pipe names (common for C2) -->
-        <PipeName condition="begin with">\DserNamePipe</PipeName>
-
-        <!-- Catch any pipes created from temp/user directories -->
-        <Image condition="begin with">C:\Users\</Image>
-        <Image condition="begin with">C:\Temp\</Image>
-        <Image condition="begin with">C:\Windows\Temp\</Image>
+        <PipeName condition="begin with" name="SelectedToolPipe">\MSSE-</PipeName>
+        <PipeName condition="begin with" name="SelectedToolPipe">\postex_</PipeName>
+        <PipeName condition="begin with" name="SelectedToolPipe">\msagent_</PipeName>
+        <PipeName condition="begin with" name="SelectedToolPipe">\PSEXESVC</PipeName>
+        <PipeName condition="begin with" name="SelectedToolPipe">\RemCom</PipeName>
+        <PipeName condition="begin with" name="SelectedToolPipe">\DserNamePipe</PipeName>
+        <Rule name="RPC_From_Staged_Process" groupRelation="and">
+          <PipeName condition="is any">\svcctl;\wkssvc;\srvsvc;\atsvc;\epmapper;\samr;\lsarpc;\netlogon</PipeName>
+          <Image condition="contains any">\Temp\;\Downloads\;\Users\Public\;\PerfLogs\</Image>
+        </Rule>
+        <!-- No all-profile pipe rule. Routine RPC from normal service locations and arbitrary custom pipe names are omitted. -->
       </PipeEvent>
     </RuleGroup>
-
-    <!--
-    ==========================================================================
-      EVENT ID 19/20/21 — WMI EVENTS  (T1546.003, T1047)
-    ==========================================================================
-      WMI event subscriptions are a stealthy persistence and execution
-      mechanism.  All three sub-events are logged: filter (19),
-      consumer (20), and consumer-to-filter binding (21).
-    ==========================================================================
-    -->
-    <RuleGroup name="WmiEvent_All" groupRelation="or">
-      <WmiEvent onmatch="exclude">
-        <!-- Log ALL WMI events — they are rare and almost always significant.
-             Any WMI event subscription in production is worth investigating. -->
-      </WmiEvent>
+    <!-- IDs 19/20/21: WMI subscription filter, consumer and binding changes; not all WMI operations. -->
+    <RuleGroup name="WmiEvent_exclude" groupRelation="or">
+      <WmiEvent onmatch="exclude" />
     </RuleGroup>
-
-    <!--
-    ==========================================================================
-      EVENT ID 22 — DNS QUERY  (T1071.004, T1048, T1568, T1583, T1584)
-    ==========================================================================
-      DNS is used for C2 beaconing, data exfiltration via tunneling,
-      and domain generation algorithms (DGA).  This section excludes
-      common Microsoft/CDN noise while capturing everything else.
-    ==========================================================================
-    -->
-    <RuleGroup name="DnsQuery_Excludes" groupRelation="or">
-      <DnsQuery onmatch="exclude">
-        <!--
-        ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-          TUNING: DNS logging is VERY noisy.  Exclude your verified internal
-          domains, CDN domains, and known SaaS providers.  Be conservative —
-          attackers use legitimate cloud services for exfiltration.
-        ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-        -->
-
-        <!-- Microsoft infrastructure (verified benign) -->
-        <QueryName condition="end with">.microsoft.com</QueryName>
-        <QueryName condition="end with">.windowsupdate.com</QueryName>
-        <QueryName condition="end with">.windows.com</QueryName>
-        <QueryName condition="end with">.msftconnecttest.com</QueryName>
-        <QueryName condition="end with">.office365.com</QueryName>
-        <QueryName condition="end with">.office.com</QueryName>
-        <QueryName condition="end with">.msedge.net</QueryName>
-        <QueryName condition="end with">.bing.com</QueryName>
-        <QueryName condition="end with">.live.com</QueryName>
-
-        <!-- Certificate validation -->
-        <QueryName condition="end with">.digicert.com</QueryName>
-        <QueryName condition="end with">.verisign.com</QueryName>
-        <QueryName condition="end with">.globalsign.com</QueryName>
-
-        <!-- CDN providers (high volume, low detection value) -->
-        <QueryName condition="end with">.akamaized.net</QueryName>
-        <QueryName condition="end with">.akamai.net</QueryName>
-        <QueryName condition="end with">.edgekey.net</QueryName>
-
-        <!--
-        ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-          DO NOT exclude cloud storage providers (Dropbox, OneDrive personal,
-          Google Drive, Mega, etc.) — these are frequently abused for
-          exfiltration (T1567.002).
-        ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-        -->
-      </DnsQuery>
+    <!-- ID 22: DNS queries with process attribution. No Microsoft, CDN or cloud-provider suffix exclusions. -->
+    <RuleGroup name="DnsQuery_exclude" groupRelation="or">
+      <DnsQuery onmatch="exclude" />
     </RuleGroup>
-
-    <!--
-    ==========================================================================
-      EVENT ID 23 — FILE DELETE ARCHIVED  (T1070.004, T1485)
-    ==========================================================================
-      When a file matching the rule is deleted, Sysmon saves a copy to
-      the ArchiveDirectory.  Invaluable for recovering attacker tools
-      that are cleaned up post-execution.
-    ==========================================================================
-    -->
-    <RuleGroup name="FileDelete_Includes" groupRelation="or">
-      <FileDelete onmatch="include">
-        <!-- Archive deleted executables and scripts -->
-        <TargetFilename condition="end with">.exe</TargetFilename>
-        <TargetFilename condition="end with">.dll</TargetFilename>
-        <TargetFilename condition="end with">.sys</TargetFilename>
-        <TargetFilename condition="end with">.ps1</TargetFilename>
-        <TargetFilename condition="end with">.bat</TargetFilename>
-        <TargetFilename condition="end with">.cmd</TargetFilename>
-        <TargetFilename condition="end with">.vbs</TargetFilename>
-        <TargetFilename condition="end with">.js</TargetFilename>
-        <TargetFilename condition="end with">.hta</TargetFilename>
-        <TargetFilename condition="end with">.lnk</TargetFilename>
-
-        <!-- Archive deleted from staging/temp paths -->
-        <TargetFilename condition="begin with">C:\Windows\Temp\</TargetFilename>
-        <TargetFilename condition="begin with">C:\Temp\</TargetFilename>
-        <TargetFilename condition="contains">\Public\</TargetFilename>
-      </FileDelete>
+    <!-- ID 23: Deleted-file preservation/archiving is OFF. Empty include matches nothing: disabled. -->
+    <RuleGroup name="FileDelete_include" groupRelation="or">
+      <FileDelete onmatch="include" />
     </RuleGroup>
-
-    <!--
-    ==========================================================================
-      EVENT ID 24 — CLIPBOARD CHANGE  (T1115 - Clipboard Data)
-    ==========================================================================
-      Monitors clipboard content changes.  Useful for detecting clipboard
-      data theft but can log sensitive data.  DISABLED by default.
-      Enable only in controlled/lab environments or with DLP in place.
-    ==========================================================================
-    -->
-    <!--
-    <RuleGroup name="ClipboardChange_Excludes" groupRelation="or">
-      <ClipboardChange onmatch="exclude">
-      </ClipboardChange>
+    <!-- ID 24: Clipboard collection is OFF. Empty include matches nothing: disabled. -->
+    <RuleGroup name="ClipboardChange_include" groupRelation="or">
+      <ClipboardChange onmatch="include" />
     </RuleGroup>
-    -->
-
-    <!--
-    ==========================================================================
-      EVENT ID 25 — PROCESS TAMPERING  (T1055.012, T1574)
-    ==========================================================================
-      Detects process hollowing, herpaderping, and other image tampering
-      techniques.  No exclusions — these events are always suspicious.
-    ==========================================================================
-    -->
-    <RuleGroup name="ProcessTampering_All" groupRelation="or">
-      <ProcessTampering onmatch="exclude">
-        <!-- Log ALL process tampering events — no exclusions.
-             These are ALWAYS worth investigating. -->
-      </ProcessTampering>
+    <!-- ID 25: Log all reported process-image tampering for investigation. -->
+    <RuleGroup name="ProcessTampering_exclude" groupRelation="or">
+      <ProcessTampering onmatch="exclude" />
     </RuleGroup>
-
-    <!--
-    ==========================================================================
-      EVENT ID 26 — FILE DELETE DETECTED (non-archived)  (T1070.004)
-    ==========================================================================
-      Lighter-weight file deletion logging without archiving the file.
-      Catches broader deletion patterns for forensic timeline building.
-
-      CHANGE (2026.03.23): Fixed overly broad exclusion.  The previous
-      config had a standalone "C:\Users\" exclude that, due to OR logic,
-      silently dropped ALL file deletion events under user profiles —
-      including attacker tool cleanup.  Replaced with targeted exclusions
-      for genuinely low-value temp/cache file deletions only.
-    ==========================================================================
-    -->
-    <RuleGroup name="FileDeleteDetected_Excludes" groupRelation="or">
-      <FileDeleteDetected onmatch="exclude">
-        <!-- Temp file cleanup (targeted by extension, not by path) -->
-        <TargetFilename condition="end with">.tmp</TargetFilename>
-        <TargetFilename condition="end with">.temp</TargetFilename>
-
-        <!-- Browser cache files (high volume, low forensic value) -->
-        <TargetFilename condition="contains">\BrowserCache\</TargetFilename>
-        <TargetFilename condition="contains">\Cache\Cache_Data\</TargetFilename>
-        <TargetFilename condition="contains">\Code Cache\</TargetFilename>
-        <TargetFilename condition="contains">\Service Worker\CacheStorage\</TargetFilename>
-        <TargetFilename condition="contains">\Microsoft\Edge\User Data\Default\Cache\</TargetFilename>
-        <TargetFilename condition="contains">\Google\Chrome\User Data\Default\Cache\</TargetFilename>
-
-        <!-- Disk Cleanup utility -->
-        <Image condition="is">C:\Windows\System32\cleanmgr.exe</Image>
+    <!-- ID 26: Selected deletion records only. No file copies and no deletion blocking. -->
+    <RuleGroup name="FileDeleteDetected_include" groupRelation="or">
+      <FileDeleteDetected onmatch="include">
+        <TargetFilename condition="contains" name="StartupArtifact">\Start Menu\Programs\Startup\</TargetFilename>
+        <TargetFilename condition="contains" name="ScheduledTaskArtifact">\Windows\System32\Tasks\</TargetFilename>
+        <TargetFilename condition="contains" name="LegacyTaskArtifact">\Windows\Tasks\</TargetFilename>
+        <TargetFilename condition="end with" name="Delete_Artifact">.exe</TargetFilename>
+        <TargetFilename condition="end with" name="Delete_Artifact">.sys</TargetFilename>
+        <TargetFilename condition="end with" name="Delete_Artifact">.scr</TargetFilename>
+        <TargetFilename condition="end with" name="Delete_Artifact">.ps1</TargetFilename>
+        <TargetFilename condition="end with" name="Delete_Artifact">.psm1</TargetFilename>
+        <TargetFilename condition="end with" name="Delete_Artifact">.bat</TargetFilename>
+        <TargetFilename condition="end with" name="Delete_Artifact">.cmd</TargetFilename>
+        <TargetFilename condition="end with" name="Delete_Artifact">.vbs</TargetFilename>
+        <TargetFilename condition="end with" name="Delete_Artifact">.vbe</TargetFilename>
+        <TargetFilename condition="end with" name="Delete_Artifact">.jse</TargetFilename>
+        <TargetFilename condition="end with" name="Delete_Artifact">.wsf</TargetFilename>
+        <TargetFilename condition="end with" name="Delete_Artifact">.wsh</TargetFilename>
+        <TargetFilename condition="end with" name="Delete_Artifact">.hta</TargetFilename>
+        <TargetFilename condition="end with" name="Delete_Artifact">.cpl</TargetFilename>
+        <TargetFilename condition="end with" name="Delete_Artifact">.msi</TargetFilename>
+        <TargetFilename condition="end with" name="Delete_Artifact">.reg</TargetFilename>
+        <Rule name="Delete_Staged_dll" groupRelation="and">
+          <TargetFilename condition="end with">.dll</TargetFilename>
+          <TargetFilename condition="contains any">\Downloads\;\Desktop\;\Temp\;\PerfLogs\;\Users\Public\</TargetFilename>
+        </Rule>
+        <Rule name="Delete_Staged_js" groupRelation="and">
+          <TargetFilename condition="end with">.js</TargetFilename>
+          <TargetFilename condition="contains any">\Downloads\;\Desktop\;\Temp\;\PerfLogs\;\Users\Public\</TargetFilename>
+        </Rule>
+        <Rule name="Delete_Staged_lnk" groupRelation="and">
+          <TargetFilename condition="end with">.lnk</TargetFilename>
+          <TargetFilename condition="contains any">\Downloads\;\Desktop\;\Temp\;\PerfLogs\;\Users\Public\</TargetFilename>
+        </Rule>
+        <Rule name="Delete_Staged_psd1" groupRelation="and">
+          <TargetFilename condition="end with">.psd1</TargetFilename>
+          <TargetFilename condition="contains any">\Downloads\;\Desktop\;\Temp\;\PerfLogs\;\Users\Public\</TargetFilename>
+        </Rule>
+        <Rule name="Delete_Staged_msp" groupRelation="and">
+          <TargetFilename condition="end with">.msp</TargetFilename>
+          <TargetFilename condition="contains any">\Downloads\;\Desktop\;\Temp\;\PerfLogs\;\Users\Public\</TargetFilename>
+        </Rule>
+        <Rule name="Delete_Staged_zip" groupRelation="and">
+          <TargetFilename condition="end with">.zip</TargetFilename>
+          <TargetFilename condition="contains any">\Downloads\;\Desktop\;\Temp\;\PerfLogs\;\Users\Public\</TargetFilename>
+        </Rule>
+        <Rule name="Delete_Staged_rar" groupRelation="and">
+          <TargetFilename condition="end with">.rar</TargetFilename>
+          <TargetFilename condition="contains any">\Downloads\;\Desktop\;\Temp\;\PerfLogs\;\Users\Public\</TargetFilename>
+        </Rule>
+        <Rule name="Delete_Staged_7z" groupRelation="and">
+          <TargetFilename condition="end with">.7z</TargetFilename>
+          <TargetFilename condition="contains any">\Downloads\;\Desktop\;\Temp\;\PerfLogs\;\Users\Public\</TargetFilename>
+        </Rule>
+        <Rule name="Delete_Staged_tar" groupRelation="and">
+          <TargetFilename condition="end with">.tar</TargetFilename>
+          <TargetFilename condition="contains any">\Downloads\;\Desktop\;\Temp\;\PerfLogs\;\Users\Public\</TargetFilename>
+        </Rule>
+        <Rule name="Delete_Staged_gz" groupRelation="and">
+          <TargetFilename condition="end with">.gz</TargetFilename>
+          <TargetFilename condition="contains any">\Downloads\;\Desktop\;\Temp\;\PerfLogs\;\Users\Public\</TargetFilename>
+        </Rule>
+        <Rule name="Delete_Staged_iso" groupRelation="and">
+          <TargetFilename condition="end with">.iso</TargetFilename>
+          <TargetFilename condition="contains any">\Downloads\;\Desktop\;\Temp\;\PerfLogs\;\Users\Public\</TargetFilename>
+        </Rule>
+        <Rule name="Delete_Staged_img" groupRelation="and">
+          <TargetFilename condition="end with">.img</TargetFilename>
+          <TargetFilename condition="contains any">\Downloads\;\Desktop\;\Temp\;\PerfLogs\;\Users\Public\</TargetFilename>
+        </Rule>
+        <Rule name="Delete_Staged_vhd" groupRelation="and">
+          <TargetFilename condition="end with">.vhd</TargetFilename>
+          <TargetFilename condition="contains any">\Downloads\;\Desktop\;\Temp\;\PerfLogs\;\Users\Public\</TargetFilename>
+        </Rule>
+        <Rule name="Delete_Staged_vhdx" groupRelation="and">
+          <TargetFilename condition="end with">.vhdx</TargetFilename>
+          <TargetFilename condition="contains any">\Downloads\;\Desktop\;\Temp\;\PerfLogs\;\Users\Public\</TargetFilename>
+        </Rule>
+        <Rule name="Delete_Staged_docm" groupRelation="and">
+          <TargetFilename condition="end with">.docm</TargetFilename>
+          <TargetFilename condition="contains any">\Downloads\;\Desktop\;\Temp\;\PerfLogs\;\Users\Public\</TargetFilename>
+        </Rule>
+        <Rule name="Delete_Staged_xlsm" groupRelation="and">
+          <TargetFilename condition="end with">.xlsm</TargetFilename>
+          <TargetFilename condition="contains any">\Downloads\;\Desktop\;\Temp\;\PerfLogs\;\Users\Public\</TargetFilename>
+        </Rule>
+        <Rule name="Delete_Staged_pptm" groupRelation="and">
+          <TargetFilename condition="end with">.pptm</TargetFilename>
+          <TargetFilename condition="contains any">\Downloads\;\Desktop\;\Temp\;\PerfLogs\;\Users\Public\</TargetFilename>
+        </Rule>
+        <Rule name="Delete_Staged_dotm" groupRelation="and">
+          <TargetFilename condition="end with">.dotm</TargetFilename>
+          <TargetFilename condition="contains any">\Downloads\;\Desktop\;\Temp\;\PerfLogs\;\Users\Public\</TargetFilename>
+        </Rule>
+        <Rule name="Delete_Staged_xltm" groupRelation="and">
+          <TargetFilename condition="end with">.xltm</TargetFilename>
+          <TargetFilename condition="contains any">\Downloads\;\Desktop\;\Temp\;\PerfLogs\;\Users\Public\</TargetFilename>
+        </Rule>
+        <Rule name="Delete_Staged_dmp" groupRelation="and">
+          <TargetFilename condition="end with">.dmp</TargetFilename>
+          <TargetFilename condition="contains any">\Downloads\;\Desktop\;\Temp\;\PerfLogs\;\Users\Public\</TargetFilename>
+        </Rule>
+        <Rule name="Delete_Staged_mdmp" groupRelation="and">
+          <TargetFilename condition="end with">.mdmp</TargetFilename>
+          <TargetFilename condition="contains any">\Downloads\;\Desktop\;\Temp\;\PerfLogs\;\Users\Public\</TargetFilename>
+        </Rule>
+        <TargetFilename condition="end with" name="EventLogFileDeletion">.evtx</TargetFilename>
       </FileDeleteDetected>
     </RuleGroup>
-
-    <!--
-    ==========================================================================
-      EVENT ID 27 — FILE BLOCK EXECUTABLE
-    ==========================================================================
-      REMOVED (2026.03.23). The previous config had OR logic that globally
-      blocked ALL .exe writes system-wide, causing catastrophic failures
-      to Defender, DISM, Windows servicing, and all installers.
-
-      Event ID 29 (FileExecutableDetected) below provides DETECTION of
-      new PE file creation without blocking. This gives you the same
-      forensic visibility without the risk.
-
-      If you need active blocking in the future, use AND logic:
-        <Rule groupRelation="and">
-          <TargetFilename condition="begin with">C:\Users\</TargetFilename>
-          <TargetFilename condition="end with">.exe</TargetFilename>
-        </Rule>
-    ==========================================================================
-    -->
-
-    <!--
-    ==========================================================================
-      EVENT ID 28 — FILE BLOCK SHREDDING  (T1485, T1070.004)
-    ==========================================================================
-      COMMENTED OUT (2026.03.23). The previous config blocked ALL shredding
-      operations. Uncomment if you intentionally want to block secure-delete
-      tools.
-    ==========================================================================
-    -->
-    <!--
-    <RuleGroup name="FileBlockShredding_All" groupRelation="or">
-      <FileBlockShredding onmatch="exclude">
-      </FileBlockShredding>
+    <!-- ID 27: EXECUTABLE FILE BLOCKING IS OFF. Do not add matching rules. Empty include matches nothing: disabled. -->
+    <RuleGroup name="FileBlockExecutable_include" groupRelation="or">
+      <FileBlockExecutable onmatch="include" />
     </RuleGroup>
-    -->
-
-    <!--
-    ==========================================================================
-      EVENT ID 29 — FILE EXECUTABLE DETECTED  (T1105, T1204)
-    ==========================================================================
-      Non-blocking detection of PE file creation.  Logs hash and metadata
-      whenever any executable file is written to disk.  This replaces
-      the removed FileBlockExecutable with safe detection-only coverage.
-    ==========================================================================
-    -->
-    <RuleGroup name="FileExecutableDetected_Excludes" groupRelation="or">
+    <!-- ID 28: FILE SHREDDING BLOCKING IS OFF. Do not add matching rules. Empty include matches nothing: disabled. -->
+    <RuleGroup name="FileBlockShredding_include" groupRelation="or">
+      <FileBlockShredding onmatch="include" />
+    </RuleGroup>
+    <!-- Bounded Windows servicing exclusions: both writer and destination must match. -->
+    <RuleGroup name="FileExecutableDetected_exclude" groupRelation="or">
       <FileExecutableDetected onmatch="exclude">
-        <!-- Exclude Windows Update and patching executables -->
-        <Image condition="is">C:\Windows\System32\svchost.exe</Image>
-        <Image condition="begin with">C:\Windows\SoftwareDistribution\</Image>
-        <Image condition="begin with">C:\Windows\WinSxS\</Image>
-
-        <!--
-        ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-          TUNING: Exclude your software deployment tools here (SCCM, PDQ,
-          Intune, etc.) — they legitimately drop executables at scale.
-        ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-        -->
+        <Rule name="TrustedInstaller_WinSxS" groupRelation="and">
+          <Image condition="is">C:\Windows\servicing\TrustedInstaller.exe</Image>
+          <TargetFilename condition="begin with">C:\Windows\WinSxS\</TargetFilename>
+        </Rule>
+        <Rule name="TiWorker_WinSxS" groupRelation="and">
+          <Image condition="begin with">C:\Windows\WinSxS\</Image>
+          <Image condition="end with">\TiWorker.exe</Image>
+          <TargetFilename condition="begin with">C:\Windows\WinSxS\</TargetFilename>
+        </Rule>
+        <Rule name="TrustedInstaller_SoftwareDistribution" groupRelation="and">
+          <Image condition="is">C:\Windows\servicing\TrustedInstaller.exe</Image>
+          <TargetFilename condition="begin with">C:\Windows\SoftwareDistribution\</TargetFilename>
+        </Rule>
+        <Rule name="TiWorker_SoftwareDistribution" groupRelation="and">
+          <Image condition="begin with">C:\Windows\WinSxS\</Image>
+          <Image condition="end with">\TiWorker.exe</Image>
+          <TargetFilename condition="begin with">C:\Windows\SoftwareDistribution\</TargetFilename>
+        </Rule>
       </FileExecutableDetected>
     </RuleGroup>
-
+    <!-- ID 29 above is FileExecutableDetected: nonblocking PE-file creation detection, including PE files with misleading extensions. -->
+    <!-- IDs 4, 16 and 255 are Sysmon health/configuration/error events and have no filter tags. -->
   </EventFiltering>
 </Sysmon>
