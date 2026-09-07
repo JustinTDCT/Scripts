@@ -522,14 +522,6 @@ REFERENCES (event semantics and rule syntax; the collection choices are local)
           <TargetFilename condition="end with">.img</TargetFilename>
           <TargetFilename condition="contains any">\Downloads\;\Desktop\;\Temp\;\PerfLogs\;\Users\Public\</TargetFilename>
         </Rule>
-        <Rule name="Delete_Staged_vhd" groupRelation="and">
-          <TargetFilename condition="end with">.vhd</TargetFilename>
-          <TargetFilename condition="contains any">\Downloads\;\Desktop\;\Temp\;\PerfLogs\;\Users\Public\</TargetFilename>
-        </Rule>
-        <Rule name="Delete_Staged_vhdx" groupRelation="and">
-          <TargetFilename condition="end with">.vhdx</TargetFilename>
-          <TargetFilename condition="contains any">\Downloads\;\Desktop\;\Temp\;\PerfLogs\;\Users\Public\</TargetFilename>
-        </Rule>
         <Rule name="Delete_Staged_docm" groupRelation="and">
           <TargetFilename condition="end with">.docm</TargetFilename>
           <TargetFilename condition="contains any">\Downloads\;\Desktop\;\Temp\;\PerfLogs\;\Users\Public\</TargetFilename>
